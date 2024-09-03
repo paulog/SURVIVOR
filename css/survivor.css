@@ -21,10 +21,25 @@ body {
  /* grid-tile.png */
  background: #000 url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgAQMAAABJtOi3AAAABlBMVEUAAAD+/v7KB/Q9AAAAAnRSTlMAM8lDrC4AAAAQSURBVAhbY1zFAAMNg5EFALt0CCw/8KEzAAAAAElFTkSuQmCC);
  /* don't allow highlighting / selection, by accidental click + drag etc. */
- -ms-user-select: none;
- -moz-user-select: none;
- -webkit-user-select: none;
  user-select: none;
+ /*
+  * avoid smooth image resizing, keep things pixelated - more true to the original.
+  * Firefox does a great job here; Safari is OK (though not pixel-sharp.)
+  * Chrome + Safari may be worse when using -webkit-optimize-contrast vs. default.
+  * https: //developer.mozilla.org/en-US/docs/Web/CSS/image-rendering
+  */
+  image-rendering: optimizeQuality;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+  /* non-standard, but quite nice under Firefox */
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+  /* chrome doesn't seem to implement this */
+  /* who knows, for IE */
+  -ms-interpolation-mode: nearest-neighbor;
+  /* font trickery */
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-font-smoothing: antialiased;
 }
 
 #c64 h1,
@@ -98,6 +113,19 @@ body {
  padding: 2px;
  font-family: "C64 User Mono";
  color: #fff;
+ cursor: pointer;
+}
+
+@media (min-resolution: 192dpi) {
+  /**
+   * in the 80s, you would have been connected through a signal converter to a TV
+   * on channel 3, or a Commodore-branded CRT "monitor" with composite video inputs,
+   * which gave higher quality rendering. Notwithstanding, there should be some fuzz.
+   * (hi-dpi only. too aggressive on non-retina screens.)
+   */
+  #c64 {
+    filter: blur(1px);
+  }
 }
 
 #c64 #cursor {
@@ -114,6 +142,7 @@ body {
  top: 0px;
  width: 100%;
  height: 100%;
+ z-index: 1;
 }
 
 #screen-list {
@@ -181,8 +210,7 @@ body {
  padding: 0px;
  overflow: hidden;
  /* title-screen-letter-tile.gif */
- 
- background: #000 url(../image/title-screen-letter-tile.gif);
+  background: #000 url(../image/title-screen-letter-tile.gif);
 }
 
 #title-screen #title-header h1 {
@@ -195,6 +223,40 @@ body {
  text-indent: -999em;
  /* title-screen-cutout.png */
  background: transparent url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAmEAAABkAgMAAACzyQ9CAAAACVBMVEUAAAAAAAD///+D3c/SAAAAAXRSTlMAQObYZgAAAAFiS0dEAmYLfGQAAAAJcEhZcwAACxMAAAsTAQCanBgAAAAidEVYdENvbW1lbnQAQ3JlYXRlZCB3aXRoIEdJTVAgb24gYSBNYWOHqHdDAAADBElEQVRo3u2bTXLkIAyFGxXZs5n7cIRZJKecWcwRfJ9svI+rmGn/DcYWehZQ1VWBRZLqVj8/xIcsnMR8PF5zfNLjVUd31p11Z93ZvWHnr+F39NIPv7zw/L69ub22j7efh/e4OE7r3/j6k+gk2kvOptszmopzMrI6U7Sa423dUOxsYHVC5GzQCutHyOgMu7OgXgz9mDI64+5sKlAuwywDGmnnH6pglgGN1MwMVTDjQSP19McqmPGgkRqZqQpmPGiknn2oghkPGumJGapgxoJGNcp574K6M6g/2/snacR9FjfMx7Eny2mlvVyk3VezO+vOurPurDvrzrqzb92fff56QI3aHtdgJNpU9XzbcjWnl3UWXncH4Odb39CWn50ZHWimoTGz5syrQLONK8bTmVOB5ho6c6szqwKtMWazMxVorTFb9qYGtNaYLc40oLXGbHGmAa01Zoszo0ShJWbrPcDrUGja/1BzaMr8vW1/T5J7LjYn+n37xWTcV82fTl++HZNoV+lpB6AOIjGl3fYZsRHY0iO07W3lc8AElEEkpjRn5vRz2G8dno3Px1xoU0Ga/l9mWFfLZIpyPuasXbqaboNo4KscElPnvOkjZOw6y5Cpi0jMWbs0ZxtEOYSQmDo5c3EBWCHKIoTEnLTVORuPEGURQmJO2sX1bLnSVxYhJKbKatq4bBigZ0NiTtrl9wAP9GxITI2cmUNT7oCeDYlJtctzZoGjARJz8RmuJxOelQ0+XR9/7PGen18fx5krzDL6g1fmzB96LQ8g5GHMdu0KXZADEHIgZoU7YLnOlELkABgdrk3X+TQ3TpdGEQNUOGJEfO50aY9neQ8gxO8ETpuYxLsbp0uniJErHEHXcexpiJuLNF8rapOY9wsUjLz+EiNG1CaEZwPUoLsxYoUjZH9b4UGQAypVGuMkbUJqolSFrCJGrHCE3Eek1t0oYsQqSGyTl+up3Gk6yA3RiDst1iagX5Fvdk4RI1VBAno8Jz50scAN0V5Wb17b9P/Euj26s+6sO+vOurPW4y/KjsjB18CxHAAAAABJRU5ErkJggg==) no-repeat 50% 50%;
+}
+
+#title-screen .marquee,
+#title-screen .marquee-text {
+  /*
+   * "The <marquee> element is not valid according to the HTML or XHTML specifications. Page authors concerned with validation should not use this tag."
+   * https://developer.mozilla.org/en/HTML/Element/marquee
+   * So instead, we'll play dirty with CSS animations. :D
+   */
+  position: relative;
+  display: block;
+}
+
+#title-screen .marquee {
+  overflow: hidden;
+  /* fix a few display things */
+  width: 46em;
+  /* center underneath logo */
+  margin-left: 1em;
+}
+
+#title-screen .marquee .marquee-text {
+  width: 100%;
+  /* undo defaults */
+  text-align: left;
+  /* force one line */
+  white-space: nowrap;
+  /* ensure it's at least this long. */
+  min-width: 160em;
+  /*
+   * message is 110 characters in length; 160 will scroll it off the left end entirely. 
+   * animation will start with an offset so it scrolls in from the right.
+   */
+  animation: marquee 20s steps(160, end) infinite;
 }
 
 #help-screen,
@@ -288,7 +350,7 @@ body.show-help #help-screen {
 
 body.show-help #world-container {
  /* a little gratuitous filter nonsense, why not. */
- -webkit-filter: blur(1px);
+ filter: blur(1px);
 }
 
 #world-container {
@@ -341,6 +403,15 @@ body.show-help #world-container {
  overflow: hidden;
 }
 
+.transform-sprite {
+ position: absolute;
+ top: 0px;
+ left: 0px;
+ width: 32px;
+ height: 128px;
+ overflow: visible;
+}
+
 /* except turret gunfire, which is relative to container. */
 .turret {
  overflow: visible;
@@ -366,109 +437,58 @@ body.show-help #world-container {
  height: 26px;
  padding: 3px;
  border-radius: 32px;
- -moz-transform: rotate(0deg), scale3d(1,1,1);
- -moz-transition: box-shadow 0.2s ease-in-out;
- -moz-transition-property: -moz-transform, box-shadow;
- -webkit-transform: rotate(0deg), scale3d(1,1,1);
- -webkit-transition: box-shadow 0.2s ease-in-out;
- -webkit-transition-property: -webkit-transform, box-shadow;
- -o-transform: rotate(0deg), scale3d(1,1,1);
- -o-transition-property: -o-transform, box-shadow;
+ opacity: 1;
+ transform: rotate(0deg), scale3d(1,1,1);
+ transition: box-shadow 0.2s ease-in-out;
+ transition-property: transform, opacity;
 }
 
 .ship.hidden {
- -webkit-transition: none;
- -moz-transition: none;
- -o-transition: none;
- -webkit-transform: scale3d(0,0,1) !important;
- -moz-transform: scale(0) !important;
- -o-transform: scale3d(0,0,1) !important;
+ transform: scale3d(10,10,1) !important;
+ opacity: 0;
+ transition: all 0.3s ease-out;
+ transition-property: transform, opacity;
  *display: none; /* IE 8 */
 }
 
-@-moz-keyframes thrustpulse {
-  from {
-    box-shadow: 0px 0px 0px rgba(255,32,32,0);
-  }
-  to {
-    box-shadow: 0px 0px 16px rgba(255,32,32,1);
-  }
-}
-
-@-webkit-keyframes thrustpulse {
-  from {
-    box-shadow: 0px 0px 0px rgba(255,32,32,0);
-  }
-  to {
-    box-shadow: 0px 0px 16px rgba(255,32,32,1);
-  }
-}
-
-.ship.thrusting {
- /* different background image? */
- box-shadow: 0px 0px 8px rgba(255,32,32,1);
- -moz-animation-duration: 0.5s;
- -moz-animation-name: thrustpulse;
- -moz-animation-iteration-count: infinite;
- -moz-animation-direction: alternate;
- -webkit-animation-duration: 0.5s;
- -webkit-animation-name: thrustpulse;
- -webkit-animation-iteration-count: infinite;
- -webkit-animation-direction: alternate;
-}
-
 .ship-thrust-up {
- -moz-transform: rotate(0deg);
- -webkit-transform: rotate(0deg);
+ transform: rotate(0deg);
 }
 
 .ship.thrust-up.thrust-left {
- -moz-transform: rotate(-45deg);
- -webkit-transform: rotate(-45deg);
+ transform: rotate(-45deg);
 }
 
 .ship.thrust-up.thrust-right {
- -moz-transform: rotate(45deg);
- -webkit-transform: rotate(45deg);
+ transform: rotate(45deg);
 }
 
 .ship.thrust-right {
- -moz-transform: rotate(90deg);
- -webkit-transform: rotate(90deg);
+ transform: rotate(90deg);
 }
 
 .ship.thrust-down {
- -moz-transform: rotate(180deg);
- -webkit-transform: rotate(180deg);
+ transform: rotate(180deg);
 }
 
 .ship.thrust-down.thrust-left {
- -moz-transform: rotate(-135deg);
- -webkit-transform: rotate(-135deg);
+ transform: rotate(-135deg);
 }
 
 .ship.thrust-down.thrust-right {
- -moz-transform: rotate(135deg);
- -webkit-transform: rotate(135deg);
+ transform: rotate(135deg);
 }
 
 .ship.thrust-left {
- -moz-transform: rotate(-90deg);
- -webkit-transform: rotate(-90deg);
+ transform: rotate(-90deg);
 }
 
 .ship-gunfire {
  position: absolute;
- /* initially, hide from view. */
- display: none;
- font-family: "verdana, arial, tahoma";
- font-size: 20px;
- font-weight: bold;
- text-align: center;
- width: 7px;
- height: 7px;
- line-height: 9px;
- overflow: hidden;
+ width: 6px;
+ height: 6px;
+ background: #fff;
+ border-radius: 100%;
 }
 
 .big-explosion {
@@ -485,7 +505,7 @@ body.show-help #world-container {
  position: absolute;
  width: 32px;
  height: 32px;
- display: none;
+ visibility: hidden;
 }
 
 .bad-guy .icon {
@@ -523,7 +543,7 @@ body.show-help #world-container {
  /* turret-gunfire.png */
  background: transparent url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAABACAYAAAB7jnWuAAAAO0lEQVR42u3XsQkAQAgEwe+/ab8EBUWTmVzY7PABmWgScB8AANZQAAAwNcPdewECBAgQIEDAeoAvGaj6ZC38LpiJVU0AAAAASUVORK5CYII=) no-repeat 0px 0px;
  /* initially, hide. */
- display: none;
+ visibility: hidden;
 }
 
 .turret-gunfire.up,
@@ -538,24 +558,40 @@ body.show-help #world-container {
 
 .block.type-0 {
  border: 1px dotted #3399ff;
+}
+
+.block.type-0,
+.block.type-0 .transform-sprite {
  /* block-type-0.png */
  background: transparent url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAACAAQMAAABQqPlZAAAABlBMVEUAAAD///+l2Z/dAAAAAXRSTlMAQObYZgAAAERJREFUKJFjYMAC+P///wAheBgYDGhNIGwjFiB08DEwFEC5DYzUJaDGU+Y+At7n/wAkOATwEWAlNAs/0mKLsQFGUC1+AXEhYCccrnvbAAAAAElFTkSuQmCC) no-repeat 0px 0px;
 }
 
 .block.type-1 {
  border: 1px dotted #ff3333;
+}
+
+.block.type-1,
+.block.type-1 .transform-sprite {
  /* block-type-1.png */
  background: transparent url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAACAAgMAAAAXCIOJAAAADFBMVEUAAAAAAABoqUH///+Pb14MAAAAAXRSTlMAQObYZgAAAERJREFUOI3NkLENADAIw/Jkn+TJFFXsyRBVeEDeggw48CEEc7aI8XMKq89ppJAZMba29bGkKiOZf772qUYKkBFjK9LnApuVuQAKuhHCAAAAAElFTkSuQmCC) no-repeat 0px 0px;
 }
 
 .block.type-2 {
  border: 1px dotted #33ff33;
+}
+
+.block.type-2,
+.block.type-2 .transform-sprite {
  /* block-type-2.png */
  background: transparent url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAACAAgMAAAAXCIOJAAAADFBMVEUAAABoqUGJQDb///8xngp2AAAAAXRSTlMAQObYZgAAAE9JREFUOI3Nk7EBwDAMwvIkT+pJ+kHRkCFMGm3ZnPOTtm0HAFmQlgUYIBPEzLei/ARYQBsB20+Y8JofM7PaXTg0t3jOj/h540d1UHT5rp8PSTfuIAS+AyMAAAAASUVORK5CYII=) no-repeat 0px 0px;
 }
 
 .block.type-3 {
  border: 1px dotted #ffff33;
+}
+
+.block.type-3,
+.block.type-3 .transform-sprite {
  /* block-type-3.png */
  background: transparent url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAACAAgMAAAAXCIOJAAAADFBMVEUAAAAAAACJQDb///+BW6ugAAAAAXRSTlMAQObYZgAAAERJREFUOI3NkLENADAIw/Jkn+TJFFXsyRBVeEDeggw48CEEc7aI8XMKq89ppJAZMba29bGkKiOZf772qUYKkBFjK9LnApuVuQAKuhHCAAAAAElFTkSuQmCC) no-repeat 0px 0px;
 }
@@ -574,6 +610,60 @@ body.show-help #world-container {
 
 #world.phase-4 .block {
  background-position: 0px -128px;
+}
+
+/* translate3d-style GPU acceleration for sprites */
+
+#world.use-experimental-transforms .block {
+  /* no background here - move into an inner element */
+  background: transparent;
+}
+
+/* inner sprite element: this element gets the sprite and will be transformed, sliding within the container. */
+
+#world.use-experimental-transforms .block .transform-sprite {
+ transform: translate3d(0px, 0px, 0px);
+}
+
+#world.use-experimental-transforms.phase-1 .block .transform-sprite {
+ transform: translate3d(0px, -32px, 0px);
+}
+
+#world.use-experimental-transforms.phase-2 .block .transform-sprite {
+ transform: translate3d(0px, -64px, 0px);
+}
+
+#world.use-experimental-transforms.phase-3 .block .transform-sprite {
+ transform: translate3d(0px, -96px, 0px);
+}
+
+#world.use-experimental-transforms.phase-4 .block .transform-sprite {
+ transform: translate3d(0px, -128px, 0px);
+}
+
+/* step-based animations, too */
+
+/*
+#world.use-experimental-transforms.pulse-interval-0 .block .transform-sprite {
+ animation: pulse 2s steps(4, end) infinite;
+}
+
+#world.use-experimental-transforms.pulse-interval-1 .block .transform-sprite {
+ animation: pulse 1.467s steps(4, end) infinite;
+}
+
+#world.use-experimental-transforms.pulse-interval-2 .block .transform-sprite {
+ animation: pulse 0.933s steps(4, end) infinite;
+}
+
+#world.use-experimental-transforms.pulse-interval-3 .block .transform-sprite {
+ animation: pulse 0.4s steps(4, end) infinite;
+}
+*/
+
+@keyframes pulse {
+ from { transform: translate3d(0px, 0px, 0px); }
+ to { transform: translate3d(0px, -128px, 0px); }
 }
 
 .block.exploding,
@@ -598,6 +688,11 @@ body.show-help #world-container {
  background-position: 0px -32px !important;
 }
 
+#world.use-experimental-transforms.disable-pulse .block .transform-sprite {
+ /* use-transform equivalent */
+ transform: none !important;
+}
+
 #world.disable-sprites div {
  /* nuke sprites */
  background-image: none !important;
@@ -606,12 +701,9 @@ body.show-help #world-container {
 
 #world.disable-css3 div {
  border-radius: none !important;
- -moz-transform: none !important;
- -moz-transition: none !important;
- -webkit-transform: none !important;
- -webkit-transition: none !important;
- -webkit-animation: none !important;
- -moz-animation: none !important; 
+ transform: none !important;
+ transition: none !important;
+ animation: none !important;
  box-shadow: none !important;
  text-shadow: none !important;
 }
@@ -714,7 +806,42 @@ body.show-help #world-container {
  height: 32px;
  /* spaceball.png */
  background: transparent url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAcCAYAAAAAwr0iAAAAgElEQVR42u2WQQqAMBAD+zjv4oP8hj/xffVacxkWA6HFQG4hO+1SaPuq89776GZVHoAHqikfB3AMeFml+fUBrmMbLXn2bABsER4gD1AsrA5A4DwAFNqvXJUHkID92VF/HqBYQIVVoAkAyKIqYB7g/w+Q3CtaH4BWEgCIfstZeYAH+iJJMw1O7SUAAAAASUVORK5CYII=) no-repeat 0px 0px;
- display: none;
+ visibility: hidden;
+}
+
+#world.use-transform .block,
+#world.use-transform .bad-guy,
+#world.use-transform .ship-gunfire,
+#world.use-transform .turret,
+#world.use-transform .turret-gunfire,
+#world.use-transform .spaceball,
+#world.use-transform .big-explosion,
+#world.use-transform .ship-gunfire {
+ /**
+  * GPU accelation? Don't mind if I do.
+  * 04/2015 update: browsers are smart enough to optimize this shiz automagically.
+  * Forcing 500+ elements to individual layers can make things worse.
+ */
+ /*
+ -ms-transform: translate3d(0px, 0px, 0px);
+ -moz-transform: translate3d(0px, 0px, 0px);
+ -webkit-transform: translate3d(0px, 0px, 0px);
+ */
+}
+
+@keyframes marquee {
+  from {
+    text-indent: 50em;
+  }
+  to {
+    text-indent: -110em;
+  }
+}
+
+
+#world.use-transform .turret.dead {
+ /* no more GPU for you */
+ transform: none;
 }
 
 #footer {

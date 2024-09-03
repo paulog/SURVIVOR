@@ -13,8 +13,9 @@
   * based on the Commodore 64 version of Survivor from 1983
   *
   * http://schillmania.com/survivor/
+  * http://www.schillmania.com/content/entries/2012/survivor-c64-html-remake/
   * http://www.flickr.com/photos/schill/sets/72157628885315581/
-  * http://github.com/scottschiller/
+  * https://github.com/scottschiller/SURVIVOR
   *
   * Scott Schiller wrote this beginning in December 2011, while on a plane to Hawaii.
   * Code provided under the Attribution-NonCommercial 3.0 Unported (CC BY-NC 3.0) License:
@@ -32,20 +33,10 @@
    */
  -->
  <link rel="stylesheet" href="css/survivor.css" />
+ <!-- see script/soundmanager2.js for full, commented version -->
  <script src="script/soundmanager2-nodebug-jsmin.js"></script>
- <script>
-  soundManager.url = 'swf/';
-  soundManager.useHighPerformance = true;
-  soundManager.flashVersion = 9;
-  soundManager.debugMode = false;
-  soundManager.wmode = 'opaque';
-  soundManager.bgColor = '#000000';
-  if (window.location.toString().match(/html5audio=1/i)) {
-    // try at your own risk - playback may lag, etc.
-    soundManager.preferFlash = false;
-  }
- </script>
  <script src="script/survivor.js"></script>
+ <!-- on schillmania.com -->
  <script src="/common/stats.js"></script>
 </head>
 
@@ -109,12 +100,11 @@
 
     <h2>A HTML + CSS + JavaScript prototype, based on the Commodore 64 version of Survivor from 1983.</h2>
 
-    <!-- "The marquee element is not valid according to the HTML or XHTML specifications. Page authors concerned with validation should not use this tag." -->
-    <!-- https://developer.mozilla.org/en/HTML/Element/marquee -->
     <h3>
-     <marquee scrolldelay="60">
-      Original Atari 2600 game by Richard Carr, (C) 1982 Synapse Software. Created for the C64 by Ewing Soft (1983.)
-     </marquee>
+     <!-- <marquee> has been outlawed and deprecated for a while, now. We'll do evil things with CSS, to mimic it. -->
+     <span class="marquee">
+      <span class="marquee-text">Original Atari 2600 game by Richard Carr, (C) 1982 Synapse Software. Created for the C64 by Ewing Soft (1983.)</span>
+     </span>
     </h3>
 
    </div>
@@ -239,7 +229,7 @@
      <div id="stats">
       <a id="help" href="#help" onclick="return false" title="Help, keyboard controls and about the game" class="cta help">?</a>
       <span class="divider">|</span>
-      <a href="http://www.flickr.com/photos/schill/sets/72157628885315581/" title="Development screenshots, notes and background info">More &raquo;</a>
+      <a href="http://www.schillmania.com/content/entries/2012/survivor-c64-html-remake/" title="Making-of, development notes, screenshots and background info">More &raquo;</a>
       <span class="divider">|</span>
       fps: <span id="fps">N/A</span>
      </div>

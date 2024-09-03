@@ -4,8 +4,9 @@
  * based on the Commodore 64 version of Survivor from 1983
  * -------------------------------------------------------
  * http://schillmania.com/survivor/
+ * http://www.schillmania.com/content/entries/2012/survivor-c64-html-remake/
  * http://www.flickr.com/photos/schill/sets/72157628885315581/
- * http://github.com/scottschiller/
+ * https://github.com/scottschiller/SURVIVOR
  *
  * Scott Schiller wrote this beginning in December 2011, while on a plane to Hawaii.
  * Code provided under the Attribution-NonCommercial 3.0 Unported (CC BY-NC 3.0) License:
@@ -13,17 +14,11 @@
  *
  */
 
+// 7.02.2018: Move to appeasing the eslint gods. Prevent HTML5 Audio() on Safari because performance dies. CSS clean-up, -webkit- prefix cruft clean-up etc.
+// 8.16.2014: The jslint gods have been re-appeased. Added strict mode.
+// 5.25.2013: The jslint gods have been appeased.
+
 /*global window, console, document, navigator, setTimeout, setInterval, clearInterval, soundManager */
-/*jslint vars: true, regexp: true, sloppy: true, white: true, nomen: true, plusplus: true */
-
-// 4.20.12: Almost lint-free, save for "unsafe characters" used to draw map.
-
-if (typeof window.console === 'undefined') {
-  // hax
-  window.console = {
-    log: function() {}
-  };
-}
 
 /**
  *
@@ -50,7 +45,7 @@ if (typeof window.console === 'undefined') {
  *  - when in a row/column, determine exactly what is in contact. isOverlappingGrid({x, y, row, col}) or somesuch.
  *  - spaceballs should reverse course and randomly flip the other axis when they hit a boundary (wall, or another spaceball.)
  *  - bad guys only collide with spaceship. absolutely-positioned for everything else.
- * 
+ *
  * Graphic elements
  * ----------------
  *  - blocks
@@ -126,26 +121,223 @@ var survivor;
 
 (function(window) {
 
+'use strict';
+
+if (window.console === undefined) {
+  // hax
+  window.console = {
+    log: function() {
+      return false;
+    }
+  };
+}
+
 var IS_MUTED = window.location.href.toString().match(/mute/i);
+var winloc = window.location.toString();
+
+/**
+ * Safari performance dies when playing multiple HTML5 <audio> / Audio() objects on desktop.
+ * So, audio is disabled by default. This has been a problem since 2013.
+ * https://bugs.webkit.org/show_bug.cgi?id=116145
+ */
+var isSafari = (
+  navigator.userAgent.match(/safari/i)
+  && !navigator.userAgent.match(/chrome/i)
+  && !window.location.toString().match(/forceaudio/i)
+);
+
+var utils = {
+
+  array: (function() {
+
+    function compare(property) {
+
+      var result;
+
+      return function(a, b) {
+
+        if (a[property] < b[property]) {
+          result = -1;
+        } else if (a[property] > b[property]) {
+          result = 1;
+        } else {
+          result = 0;
+        }
+        return result;
+      };
+
+    }
+
+    function shuffle(array) {
+
+      // Fisher-Yates shuffle algo
+
+      var i, j, temp;
+
+      for (i = array.length - 1; i > 0; i--) {
+        j = Math.floor(Math.random() * (i + 1));
+        temp = array[i];
+        array[i] = array[j];
+        array[j] = temp;
+      }
+
+      return array;
+
+    }
+
+    return {
+      compare: compare,
+      shuffle: shuffle
+    };
+
+  }()),
+
+  css: (function() {
+
+    function hasClass(o, cStr) {
+
+      // modern
+      if (o && o.classList) {
+        return o.classList.contains(cStr);
+      }
+      // legacy
+      return (o.className !== undefined ? new RegExp('(^|\\s)' + cStr + '(\\s|$)').test(o.className) : false);
+
+    }
+
+    function addClass(o, cStr) {
+
+      if (o && o.classList) {
+        o.classList.add(cStr);
+        return;
+      }
+
+      if (!o || !cStr || hasClass(o, cStr)) return;
+      o.className = (o.className ? o.className + ' ' : '') + cStr;
+
+    }
+
+    function removeClass(o, cStr) {
+
+      if (o && o.classList) {
+        o.classList.remove(cStr);
+        return;
+      }
+
+      if (!o || !cStr || !hasClass(o, cStr)) return;
+      o.className = o.className.replace(new RegExp('( ' + cStr + ')|(' + cStr + ')', 'g'), '');
+
+    }
+
+    function swapClass(o, cStr1, cStr2) {
+
+      if (o && o.classList) {
+        if (cStr1 !== undefined && cStr1 !== null && cStr1.length) o.classList.remove(cStr1);
+        if (cStr2 !== undefined && cStr2 !== null && cStr2.length) o.classList.add(cStr2);
+        return;
+      }
+
+      var tmpClass = {
+        className: o.className
+      };
+
+      removeClass(tmpClass, cStr1);
+      addClass(tmpClass, cStr2);
+
+      o.className = tmpClass.className;
+
+    }
+
+    function toggleClass(o, cStr) {
+
+      (hasClass(o, cStr) ? removeClass : addClass)(o, cStr);
+
+    }
+
+    return {
+      has: hasClass,
+      add: function(o, className) {
+        // accept space-delimited classNames, but each item
+        // needs to be added via o.classNames.add() one at a time.
+        if (!className) return;
+        var classNames = className.split(' ');
+        for (var i = 0, j = classNames.length; i < j; i++) {
+          addClass(o, classNames[i]);
+        }
+      },
+      remove: removeClass,
+      swap: swapClass,
+      toggle: toggleClass
+    };
+
+  }()),
+
+  events: (function() {
+
+    var add, remove, preventDefault;
+
+    add = (window.addEventListener !== undefined ? function(o, evtName, evtHandler) {
+      return o.addEventListener(evtName, evtHandler, false);
+    } : function(o, evtName, evtHandler) {
+      o.attachEvent('on' + evtName, evtHandler);
+    });
+
+    remove = (window.removeEventListener !== undefined ? function(o, evtName, evtHandler) {
+      return o.removeEventListener(evtName, evtHandler, false);
+    } : function(o, evtName, evtHandler) {
+      return o.detachEvent('on' + evtName, evtHandler);
+    });
+
+    preventDefault = function(e) {
+      if (e.preventDefault) {
+        e.preventDefault();
+      } else {
+        e.returnValue = false;
+        e.cancelBubble = true;
+      }
+    };
+
+    return {
+      add: add,
+      preventDefault: preventDefault,
+      remove: remove
+    };
+
+  }())
+
+};
 
 function Survivor() {
 
   // internal reference
   var game,
-      data,
-      dom,
-      events,
-      objects,
+      gameData,
+      gameDom,
+      gameObjects,
       mapTypes,
       mapData,
       isIE = navigator.userAgent.match(/msie/i),
       oldIE = navigator.userAgent.match(/msie 6/i),
 
       // adds debug elements to the grid, UI etc.
-      DEBUG_MODE = (window.location.toString().match(/debug/i)),
+      DEBUG_MODE = (winloc.match(/debug/i)),
 
       // ?profile=1, ?profiling=1, whatever.
-      PERFORMANCE_MODE = (window.location.toString().match(/profil/i)),
+      PERFORMANCE_MODE = (winloc.match(/profil/i)),
+
+      /**
+       * Chrome-specific GPU-accelerated positioning (vs .style.left + .style.top) and compositing / layer promotion
+       * Safari didn't like this so much back in 2012, now enabled by default.
+       * Explicit override: #notransform to disable.
+       */
+      USE_TRANSFORM = (!winloc.match(/notransform/i)),
+
+      /**
+       * Additional: translate3d() for block / world pulse effect, attempt at GPU compositing / reducing paints. Step-based keyframe animations for pulse effect, as well.
+       * Performs worse as of 06/2013, presumably due to doubled number of DOM elements (~1100) and thus expensive "recalculate style" work.
+       * Related screenshot: http://flic.kr/p/eHbgpf
+       */
+      USE_EXPERIMENTAL_TRANSFORM = (winloc.match(/experimentaltransform/i)),
 
       DEFAULT_LIVES = 3,
       DEFAULT_SMARTBOMBS = 3,
@@ -230,7 +422,7 @@ function Survivor() {
       // (but causes some visual glitches in Webkit)
       // is_firefox = !!(navigator.userAgent.match(/firefox/i));
 
-  objects = {
+  gameObjects = {
 
     // instances of controllers, major objects and so forth
     baseController: null,
@@ -255,7 +447,7 @@ function Survivor() {
 
   };
 
-  data = {
+  gameData = {
 
     map: [],
     NODE_WIDTH: 32,
@@ -267,22 +459,32 @@ function Survivor() {
 
   };
 
-  dom = {
+  // special case: inner <div> for transform: translate3d() GPU-accelerated sprite animation.
+  var itemTemplate = document.createElement('div');
+  var innerNode;
 
-    gridItemTemplate: document.createElement('div'),
+  gameDom = {
+
+    gridItemTemplate: itemTemplate,
     world: document.getElementById('world'),
     worldContainer: document.getElementById('world-container'),
     worldFragment: document.createDocumentFragment()
 
   };
 
+  if (USE_EXPERIMENTAL_TRANSFORM) {
+    innerNode = document.createElement('div');
+    innerNode.className = 'transform-sprite';
+    itemTemplate.appendChild(innerNode);
+    gameDom.world.className = 'use-experimental-transforms';
+  }
+
   // for internal reference
   game = {
 
-    data: data,
-    dom: dom,
-    events: events,
-    objects: objects
+    data: gameData,
+    dom: gameDom,
+    objects: gameObjects
 
   };
 
@@ -294,7 +496,7 @@ function Survivor() {
     // throttle audible pitch increase calls
     var now = new Date();
     if (now - lastAudioIncrement > audioIncrementThrottle) {
-      
+
       lastAudioIncrement = now;
       audioPitchCounter += 0.5;
       if (audioPitchCounter >= audioPitchCounterMax) {
@@ -333,8 +535,8 @@ function Survivor() {
     playPop: function(audioPitch) {
 
       soundManager.play('pop-sprite-' + soundSprites.popSpriteCounter, {
-        from: (audioPitch*400) - 10,
-         to: (audioPitch*400) + 350
+        from: (audioPitch * 400) - 10,
+         to: (audioPitch * 400) + 350
       });
 
       soundSprites.popSpriteCounter++;
@@ -344,100 +546,6 @@ function Survivor() {
       }
 
     }
-
-  };
-
-  var utils;
-
-  utils = {
-
-    css: (function() {
-
-      function hasClass(o, cStr) {
-
-        return (typeof(o.className)!=='undefined'?new RegExp('(^|\\s)'+cStr+'(\\s|$)').test(o.className):false);
-
-      }
-
-      function addClass(o, cStr) {
-
-        if (!o || !cStr || hasClass(o,cStr)) {
-          return false; // safety net
-        }
-        o.className = (o.className?o.className+' ':'')+cStr;
-
-      }
-
-      function removeClass(o, cStr) {
-
-        if (!o || !cStr || !hasClass(o,cStr)) {
-          return false;
-        }
-        o.className = o.className.replace(new RegExp('( '+cStr+')|('+cStr+')','g'),'');
-
-      }
-
-      function swapClass(o, cStr1, cStr2) {
-
-        var tmpClass = {
-          className: o.className
-        };
-
-        removeClass(tmpClass, cStr1);
-        addClass(tmpClass, cStr2);
-
-        o.className = tmpClass.className;
-
-      }
-
-      function toggleClass(o, cStr) {
-
-        (hasClass(o, cStr)?removeClass:addClass)(o, cStr);
-
-      }
-
-      return {
-        has: hasClass,
-        add: addClass,
-        remove: removeClass,
-        swap: swapClass,
-        toggle: toggleClass
-      };
-
-    }()),
-
-    events: (function() {
-
-      var add, remove, preventDefault;
-
-      add = (typeof window.addEventListener !== 'undefined' ? function(o, evtName, evtHandler) {
-        return o.addEventListener(evtName,evtHandler,false);
-      } : function(o, evtName, evtHandler) {
-        o.attachEvent('on'+evtName,evtHandler);
-      });
-
-      remove = (typeof window.removeEventListener !== 'undefined' ? function(o, evtName, evtHandler) {
-        return o.removeEventListener(evtName,evtHandler,false);
-      } : function(o, evtName, evtHandler) {
-        return o.detachEvent('on'+evtName,evtHandler);
-      });
-
-      preventDefault = function(e) {
-        if (e.preventDefault) {
-          e.preventDefault();
-        } else {
-          e.returnValue = false;
-          e.cancelBubble = true;
-        }
-      };
-
-      return {
-        add: add,
-        preventDefault: preventDefault,
-        remove: remove
-      };
-
-    }())
 
   };
 
@@ -455,40 +563,38 @@ function Survivor() {
      * https://gist.github.com/838785
      */
 
-    getAnimationFrame = (function() {
-      return window.requestAnimationFrame  ||
+    var _animationFrame = (window.requestAnimationFrame ||
         window.webkitRequestAnimationFrame ||
-        window.mozRequestAnimationFrame    ||
-        window.oRequestAnimationFrame      ||
-        window.msRequestAnimationFrame     ||
-        null;
-    }());
+        window.mozRequestAnimationFrame ||
+        window.oRequestAnimationFrame ||
+        window.msRequestAnimationFrame ||
+        null);
 
-    // TODO: sort out "illegal invocation" Chrome errors when trying to call wrapped function.
-    // also, it delivers lower FPS at time of writing anyways.
-    getAnimationFrame = null;
+    // apply to window, avoid "illegal invocation" errors in Chrome
+    getAnimationFrame = _animationFrame ? function() {
+      return _animationFrame.apply(window, arguments);
+    } : null;
 
-    if (getAnimationFrame && window.location.toString().match(/interval/i)) {
-      console.log('forcing setInterval() for game loop');
-      getAnimationFrame = null;
+    if (!getAnimationFrame) {
+      console.warn('No window.requestAnimationFrame() or equivalent?');
     }
 
     var transform, styles, prop;
 
-    function has(prop) {
+    function has(propString) {
 
       // test for feature support
-      var result = testDiv.style[prop];
-      return (typeof result !== 'undefined' ? prop : null);
+      var result = testDiv.style[propString];
+      return (result !== undefined ? propString : null);
 
     }
 
     // note local scope.
-    var features = {
+    var localFeatures = {
 
       audio: false, // set later via SM2
 
-      opacity: (function(){
+      opacity: (function() {
         try {
           testDiv.style.opacity = '0.5';
         } catch(e) {
@@ -498,7 +604,7 @@ function Survivor() {
       }()),
 
       transform: {
-        ie:  has('-ms-transform'),
+        ie: has('-ms-transform'),
         moz: has('MozTransform'),
         opera: has('OTransform'),
         webkit: has('webkitTransform'),
@@ -511,16 +617,16 @@ function Survivor() {
         prop: null
       },
 
-      'getAnimationFrame': getAnimationFrame
+      getAnimationFrame: getAnimationFrame
 
     };
 
-    features.transform.prop = (
-      features.transform.w3 || 
-      features.transform.moz ||
-      features.transform.webkit ||
-      features.transform.ie ||
-      features.transform.opera
+    localFeatures.transform.prop = (
+      localFeatures.transform.w3 ||
+      localFeatures.transform.moz ||
+      localFeatures.transform.webkit ||
+      localFeatures.transform.ie ||
+      localFeatures.transform.opera
     );
 
     function attempt(style) {
@@ -536,33 +642,31 @@ function Survivor() {
 
     }
 
-    if (features.transform.prop) {
+    if (localFeatures.transform.prop) {
 
       // try to derive the rotate/3D support.
-      transform = features.transform.prop;
+      transform = localFeatures.transform.prop;
       styles = {
         css_2d: 'rotate(0deg)',
         css_3d: 'rotate3d(0,0,0,0deg)'
       };
 
       if (attempt(styles.css_3d)) {
-        features.rotate.has3D = true;
+        localFeatures.rotate.has3D = true;
         prop = 'rotate3d';
       } else if (attempt(styles.css_2d)) {
         prop = 'rotate';
       }
 
-      // soundManager._wD('Has 3D rotate: '+features.rotate.has3D);
+      // soundManager._wD('Has 3D rotate: '+localFeatures.rotate.has3D);
 
-      features.rotate.prop = prop;
+      localFeatures.rotate.prop = prop;
 
     }
 
-    console.log('user agent feature test:', features);
+    console.log('user agent feature test:', localFeatures);
 
-    console.log('requestAnimationFrame() is' + (features.getAnimationFrame ? '' : ' not') + ' available');
-
-    return features;
+    return localFeatures;
 
   }());
 
@@ -580,9 +684,9 @@ function Survivor() {
       }
     }
 
-    o2 = (typeof oAdd === 'undefined'?{}:oAdd);
+    o2 = (oAdd === undefined ? {} : oAdd);
     for (o in o2) {
-      if (o2.hasOwnProperty(o) && typeof o1[o] === 'undefined') {
+      if (o2.hasOwnProperty(o) && o1[o] === undefined) {
         o1[o] = o2[o];
       }
     }
@@ -594,15 +698,15 @@ function Survivor() {
 
     var o,
         x, y,
-        type, subType,
-        oNode = oOptions.node;
+        type, subType/*,
+        oNode = oOptions.node*/;
 
     x = oOptions.x;
     y = oOptions.y;
     type = oOptions.type;
     subType = oOptions.subType;
 
-    o = dom.gridItemTemplate.cloneNode(oNode);
+    o = game.dom.gridItemTemplate.cloneNode(true);
 
     o.style.left = (game.data.NODE_WIDTH * x) + 'px';
     o.style.top = (game.data.NODE_HEIGHT * y) + 'px';
@@ -617,20 +721,20 @@ function Survivor() {
 
     var i, j, k, l;
 
-    for (i=0, j=objects.spaceBalls.length; i<j; i++) {
-      objects.spaceBalls[i].animate();
+    for (i = 0, j = game.objects.spaceBalls.length; i < j; i++) {
+      game.objects.spaceBalls[i].animate();
     }
 
     // also do "own" collision check
-    for (i=0, j=objects.spaceBalls.length; i<j; i++) {
+    for (i = 0, j = game.objects.spaceBalls.length; i < j; i++) {
 
-      for (k=0, l=objects.spaceBalls.length; k<l; k++) {
+      for (k = 0, l = game.objects.spaceBalls.length; k < l; k++) {
 
         // don't compare against self...
-        if (k !== i && objects.spaceBalls[i].data.row === objects.spaceBalls[k].data.row && objects.spaceBalls[i].data.col === objects.spaceBalls[k].data.col) {
+        if (k !== i && game.objects.spaceBalls[i].data.row === game.objects.spaceBalls[k].data.row && game.objects.spaceBalls[i].data.col === game.objects.spaceBalls[k].data.col) {
 
           // console.log('spaceball vs. spaceball!');
-          objects.spaceBalls[i].bounce();
+          game.objects.spaceBalls[i].bounce();
           break;
 
         }
@@ -655,11 +759,11 @@ function Survivor() {
 
     css = {
 
-      'phase0': '', // default state
-      'phase1': 'phase-1',
-      'phase2': 'phase-2',
-      'phase3': 'phase-3',
-      'phase4': 'phase-4'
+      phase0: '', // default state
+      phase1: 'phase-1',
+      phase2: 'phase-2',
+      phase3: 'phase-3',
+      phase4: 'phase-4'
 
     };
 
@@ -667,24 +771,24 @@ function Survivor() {
 
       GAME_SPEED: 1, // the game speed multiplier
       loopTimer: null,
-      loopInterval: 1000/30, // aim for 30 fps
+      loopInterval: 1000 / 33, // aim for 33 fps
       lastPhase: null,
       pulseCount: 0,
       pulseStage: 0,
       pulsePhases: 4,
       pulseTimer: null, // will inherit default
       pulseIntervals: {
-        'stage0': 500,
-        'stage1': 366.67,
-        'stage2': 233.33,
-        'stage3': 100
+        stage0: 500,
+        stage1: 366.67,
+        stage2: 233.33,
+        stage3: 100
       },
       speedMultiplier: 1,
       speedMultipliers: {
-        'stage0': 1,
-        'stage1': 1.1,
-        'stage2': 1.2,
-        'stage3': 1.3
+        stage0: 1,
+        stage1: 1.1,
+        stage2: 1.2,
+        stage3: 1.3
       },
       statsTimer: null,
       statsInterval: 1000
@@ -695,7 +799,7 @@ function Survivor() {
 
       loop: function() {
 
-/*
+        /*
         var now = new Date();
 
         if (now - lastExec < data.loopThrottle) {
@@ -704,7 +808,8 @@ function Survivor() {
         }
 
         lastExec = now;
-*/
+        */
+
         // based on game state, animate or wait for input or ?
         counter++;
         fpsCounter++;
@@ -712,7 +817,7 @@ function Survivor() {
         if (game.objects.levelEndSequence.data.active) {
 
           game.objects.levelEndSequence.animate();
-          return false;
+          return;
 
         }
 
@@ -745,7 +850,7 @@ function Survivor() {
 
         // don't animate the world if the ship is dying/dead.
         if (!game.objects.ship.isAlive()) {
-          return false;
+          return;
         }
 
         // the world heartbeat, per se.
@@ -757,7 +862,8 @@ function Survivor() {
 
         currentPhase = css['phase' + data.pulseCount];
 
-        if (!oldIE) {
+        // only include experimental check if using className changes vs. CSS animation.
+        if (!oldIE /*&& !USE_EXPERIMENTAL_TRANSFORM*/) {
           utils.css.swap(game.dom.world, data.lastPhase, currentPhase);
         }
 
@@ -795,10 +901,15 @@ function Survivor() {
 
     };
 
-    function refreshAnimationCallback(time) {
+    function refreshAnimationCallback() {
 
-      var now = (time || new Date()),
+      var now = new Date(),
           delta = now - lastExec;
+
+      if (data.loopTimer) {
+        // repeat the process
+        getNextFrame();
+      }
 
       if (delta >= data.loopInterval) {
 
@@ -809,16 +920,11 @@ function Survivor() {
 
       }
 
-      if (data.loopTimer) {
-        // and repeat the process
-        getNextFrame();
-      }
-
     }
 
     getNextFrame = function() {
 
-      features.getAnimationFrame(refreshAnimationCallback);
+      (window.requestAnimationFrame || features.getAnimationFrame)(refreshAnimationCallback);
 
     };
 
@@ -839,26 +945,37 @@ function Survivor() {
 
     function setPulseStage(nStage) {
 
+      var pulseCSS = {
+        className: game.dom.world.className
+      };
+
       stopPulse();
 
       if (!nStage) {
         nStage = 0;
       }
 
+      // determine new pulse interval CSS
+      utils.css.remove(pulseCSS, 'pulse-interval-' + data.pulseStage);
+      utils.css.add(pulseCSS, 'pulse-interval-' + nStage);
+
       data.pulseStage = nStage;
+
+      // apply to the world (CSS animations)
+      game.dom.world.className = pulseCSS.className;
 
       // TODO: clean up
 
       data.pulseInterval = data.pulseIntervals['stage' + nStage];
       data.speedMultiplier = data.speedMultipliers['stage' + nStage];
 
-      console.log('set pulse stage ' + nStage +', interval ' + data.pulseInterval);
+      console.log('set pulse stage ' + nStage + ', interval ' + data.pulseInterval);
 
     }
 
     function nextPulseStage() {
 
-      setPulseStage(getPulseStage()+1);
+      setPulseStage(getPulseStage() + 1);
 
     }
 
@@ -892,6 +1009,7 @@ function Survivor() {
         } else {
 
           data.loopTimer = true;
+
           getNextFrame();
 
         }
@@ -948,7 +1066,7 @@ function Survivor() {
 
     }
 
-    function init() {
+    function eventsInit() {
 
       // set default state? welcome screen, etc.?
      oStats = document.getElementById('fps');
@@ -959,7 +1077,7 @@ function Survivor() {
 
     return {
       data: data,
-      init: init,
+      init: eventsInit,
       isActive: isActive,
       pause: pause,
       resume: resume,
@@ -988,10 +1106,10 @@ function Survivor() {
       var i;
 
       if (!objects.blocks.length) {
-        return false;
+        return;
       }
 
-      for (i=0; i<objects.blocks.length; i++) {
+      for (i = 0; i < objects.blocks.length; i++) {
 
         if (objects.blocks[i].animate()) {
 
@@ -1014,7 +1132,7 @@ function Survivor() {
     function startAnimation(oBlock) {
 
       // we have something that should now be animating.
-      if (typeof objects.blocks_hash[oBlock.data.id] === 'undefined') {
+      if (objects.blocks_hash[oBlock.data.id] === undefined) {
 
         objects.blocks_hash[oBlock.data.id] = true;
         objects.blocks.push(oBlock);
@@ -1022,7 +1140,7 @@ function Survivor() {
       }
 
     }
- 
+
     return {
       animate: animate,
       startAnimation: startAnimation
@@ -1030,7 +1148,7 @@ function Survivor() {
 
   }
 
-  objects.blockController = new BlockController();
+  gameObjects.blockController = new BlockController();
 
   var blockCounter = 0;
 
@@ -1061,20 +1179,18 @@ function Survivor() {
 
     };
 
-    var counter = 0;
-
     function hittable() {
       // this thing can be hit (or collide with the ship), provied it is active.
       return !data.dead;
     }
 
-    function pixelCollisionCheck(oOptions) {
+    function pixelCollisionCheck(localOptions) {
 
-      var hit;
+      var hitObject;
       var collision = game.objects.collision;
 
-      hit = collision.checkSprites({
-         object1: oOptions,
+      hitObject = collision.checkSprites({
+         object1: localOptions,
          object2: {
            type: 'block-type-generic',
            x: data.x,
@@ -1084,7 +1200,7 @@ function Survivor() {
          }
       });
 
-      return hit;
+      return hitObject;
 
     }
 
@@ -1120,7 +1236,7 @@ function Survivor() {
       if (!data.dead && data.power) {
 
         data.power--;
-        objects.gameController.addPoints(data.points);
+        game.objects.gameController.addPoints(data.points);
         animationStart();
 
       }
@@ -1149,7 +1265,7 @@ function Survivor() {
 
     }
 
-    function init() {
+    function blockInit() {
 
       if (!o) {
 
@@ -1162,7 +1278,7 @@ function Survivor() {
 
       }
 
-      dom.worldFragment.appendChild(o);
+      game.dom.worldFragment.appendChild(o);
 
     }
 
@@ -1178,7 +1294,7 @@ function Survivor() {
       data.dead = false;
       data.power = defaults.power;
 
-      init();
+      blockInit();
 
     }
 
@@ -1190,8 +1306,6 @@ function Survivor() {
           // edge case (and tell controller this should not be animated any more.)
           return true;
         }
-
-        counter++;
 
         var complete = false;
 
@@ -1222,7 +1336,7 @@ function Survivor() {
 
     }
 
-    init();
+    blockInit();
 
     objectInterface = {
       animate: animate,
@@ -1257,10 +1371,10 @@ function Survivor() {
         nodeParent = game.dom.world;
 
     css = {
-      'bird': 'bird',
-      'smiley': 'smiley',
-      'x': 'x',
-      'exploding': 'exploding'
+      bird: 'bird',
+      smiley: 'smiley',
+      x: 'x',
+      exploding: 'exploding'
     };
 
     data = {
@@ -1275,8 +1389,8 @@ function Survivor() {
       h: 24,
       containerW: 32,
       containerH: 32,
-      vX: (game.data.NODE_WIDTH/16 + Math.random() * 0.5) * game.objects.gameLoop.data.GAME_SPEED,
-      vY: (game.data.NODE_HEIGHT/16 + Math.random() * 0.5) * game.objects.gameLoop.data.GAME_SPEED,
+      vX: ((game.data.NODE_WIDTH / 16) + (Math.random() * 0.5)) * game.objects.gameLoop.data.GAME_SPEED,
+      vY: ((game.data.NODE_HEIGHT / 16) + (Math.random() * 0.5)) * game.objects.gameLoop.data.GAME_SPEED,
       points: 200,
       explosionFrame: 0,
       explosionFrames: 10,
@@ -1303,8 +1417,7 @@ function Survivor() {
 
       if (data.visible) {
         data.visible = false;
-        nodeParent.removeChild(o);
-        o.style.display = 'none';
+        o.style.visibility = 'hidden';
       }
 
     }
@@ -1313,8 +1426,7 @@ function Survivor() {
 
       if (!data.visible) {
         data.visible = true;
-        nodeParent.appendChild(o);
-        o.style.display = 'block';
+        o.style.visibility = 'visible';
       }
 
     }
@@ -1426,8 +1538,8 @@ function Survivor() {
       var ship = game.objects.ship;
 
       return {
-        deltaX: (data.x < ship.data.x - (ship.data.w/2) ? 1 : -1),
-        deltaY: (data.y < ship.data.y - (ship.data.h/2) ? 1 : -1)
+        deltaX: (data.x < ship.data.x - (ship.data.w / 2) ? 1 : -1),
+        deltaY: (data.y < ship.data.y - (ship.data.h / 2) ? 1 : -1)
       };
 
     }
@@ -1461,7 +1573,7 @@ function Survivor() {
 
     }
 
-    function reset() {
+    function resetBadGuy() {
 
       hide();
 
@@ -1498,7 +1610,7 @@ function Survivor() {
       // explosion effect/noise
       if (!data.dead && !data.exploding) {
 
-        objects.gameController.addPoints(data.points);
+        game.objects.gameController.addPoints(data.points);
 
         if (features.audio) {
           incrementAudioPitch();
@@ -1565,7 +1677,7 @@ function Survivor() {
 
       if (fire.length) {
 
-        for (i=0, j=fire.length; i<j; i++) {
+        for (i = 0, j = fire.length; i < j; i++) {
 
           hit = game.objects.collision.check(thisPoint, {
             x: fire[i].data.x,
@@ -1611,7 +1723,7 @@ function Survivor() {
         // did the bad guy hit turret gunfire?
 
         // if heading down or right, base coordinates on far edges.
-        location = game.objects.collision.xyToRowCol(data.x + (data.w/2), data.y + (data.h/2));
+        location = game.objects.collision.xyToRowCol(data.x + (data.w / 2), data.y + (data.h / 2));
         // var location = game.objects.collision.xyToRowCol(data.x, data.y);
 
         turretGunfire = game.objects.turretGunfireMap.check(location.row, location.col);
@@ -1650,7 +1762,7 @@ function Survivor() {
 
         data.exploding = false;
         data.dead = true;
-        reset();
+        resetBadGuy();
         destruct();
 
     }
@@ -1661,7 +1773,7 @@ function Survivor() {
 
       // may be inactive, or died and awaiting cleanup
       if (!data.active || data.dead) {
-        return false;
+        return;
       }
 
       counter++;
@@ -1694,24 +1806,24 @@ function Survivor() {
 
         // explosion/death sequence
 
-//        if (counter % 2 === 0) {
+        // if (counter % 2 === 0) {
 
-          data.explosionFrame++;
+        data.explosionFrame++;
 
-          applyFrameX(data.explosionFrame);
+        applyFrameX(data.explosionFrame);
 
-          if (data.explosionFrame >= data.explosionFrames) {
-            // it's all over.
-            dead();
-          }
+        if (data.explosionFrame >= data.explosionFrames) {
+          // it's all over.
+          dead();
+        }
 
-//        }
+        // }
 
       }
 
     }
 
-    function init() {
+    function initBadGuy() {
 
       if (!o) {
 
@@ -1720,12 +1832,14 @@ function Survivor() {
 
         setRandomType();
 
+        nodeParent.appendChild(o);
+
       }
 
     }
 
     // hack/convenience: start right away?
-    init();
+    initBadGuy();
 
     // hack/testing
     startAttack();
@@ -1735,7 +1849,7 @@ function Survivor() {
       collisionCheck: collisionCheck,
       data: data,
       die: die,
-      init: init,
+      init: initBadGuy,
       startAttack: startAttack
     };
 
@@ -1756,7 +1870,7 @@ function Survivor() {
       var items = objects.badGuys,
           i, j;
 
-      for (i=0, j=items.length; i<j; i++) {
+      for (i = 0, j = items.length; i < j; i++) {
         items[i].animate();
       }
 
@@ -1781,7 +1895,7 @@ function Survivor() {
 
       if (items.length) {
 
-        for (j=items.length-1; j>=0; j--) {
+        for (j = items.length - 1; j >= 0; j--) {
 
           thisPoint = {
             x: items[j].data.x,
@@ -1790,7 +1904,7 @@ function Survivor() {
             h: items[j].data.h
           };
 
-          for (i=items.length-1; i>=0; i--) {
+          for (i = items.length - 1; i >= 0; i--) {
 
             // don't compare to self, or dead things...
             if (i !== j && items[i].data.active && !items[i].data.exploding && items[j].data.active && !items[j].data.exploding) {
@@ -1832,7 +1946,7 @@ function Survivor() {
 
       if (items.length) {
 
-        for (i=0, j=items.length; i<j; i++) {
+        for (i = 0, j = items.length; i < j; i++) {
           hit = items[i].collisionCheck();
           if (hit) {
             hit = true;
@@ -1860,7 +1974,7 @@ function Survivor() {
       var i;
 
       // hack: check and clean up any dead ones, first.
-      for (i=0; i<objects.badGuys.length; i++) {
+      for (i = 0; i < objects.badGuys.length; i++) {
         if (objects.badGuys[i].data.dead) {
           objects.badGuys.splice(i, 1);
         }
@@ -1874,7 +1988,7 @@ function Survivor() {
 
       var i, j;
       // the effect of a smartbomb.
-      for (i=0, j=objects.badGuys.length; i<j; i++) {
+      for (i = 0, j = objects.badGuys.length; i < j; i++) {
         // TODO: active check?
         objects.badGuys[i].die();
       }
@@ -1891,7 +2005,7 @@ function Survivor() {
 
   }
 
-  objects.badGuyController = new BadGuyController();
+  game.objects.badGuyController = new BadGuyController();
 
   spaceBallTemplate = document.createElement('div');
   spaceBallTemplate.className = 'spaceball';
@@ -1935,7 +2049,7 @@ function Survivor() {
       var xAxis = Math.random() > 0.5,
 
           // randomly choose +/-
-          velocity = (game.data.NODE_WIDTH/16) * (Math.random() > 0.5 ? 1 : -1) * game.objects.gameLoop.data.GAME_SPEED;
+          velocity = (game.data.NODE_WIDTH / 16) * (Math.random() > 0.5 ? 1 : -1) * game.objects.gameLoop.data.GAME_SPEED;
 
       // HACK: for now, just be stupid and reverse course.
       // current bug exists where reversing direction causes minute up/down/left/right movements, resulting in imperfect grid alignment
@@ -1943,7 +2057,7 @@ function Survivor() {
 
       if (!noAxisFlip) {
 
-        data.vX = (xAxis ? velocity: 0);
+        data.vX = (xAxis ? velocity : 0);
         data.vY = (xAxis ? 0 : velocity);
 
       } else {
@@ -1961,8 +2075,7 @@ function Survivor() {
       if (data.visible) {
         data.visible = false;
         if (nodeParent && o) {
-          nodeParent.removeChild(o);
-          o.style.display = 'none';
+          o.style.visibility = 'hidden';
         }
       }
 
@@ -1972,8 +2085,7 @@ function Survivor() {
 
       if (!data.visible) {
         data.visible = true;
-        nodeParent.appendChild(o);
-        o.style.display = 'block';
+        o.style.visibility = 'visible';
       }
 
     }
@@ -1996,8 +2108,17 @@ function Survivor() {
 
         if (game.objects.screen.isInView(location.col, location.row)) {
 
-          o.style.left = Math.max(0, Math.floor(x)) + 'px';
-          o.style.top = Math.max(0, Math.floor(y)) + 'px';
+
+          if (USE_TRANSFORM) {
+
+            o.style[features.transform.prop] = 'translate3d(' + Math.floor(x) + 'px, ' + Math.floor(y) + 'px, 0px)';
+
+          } else {
+
+            o.style.left = Math.max(0, Math.floor(x)) + 'px';
+            o.style.top = Math.max(0, Math.floor(y)) + 'px';
+
+          }
 
           show();
 
@@ -2061,7 +2182,8 @@ function Survivor() {
         || (data.vX >= 0 && data.col >= game.data.world_cols)
         || (data.vY >= 0 && data.row >= game.data.world_rows)
         || (data.vY < 0 && data.y + data.vY <= 0)) {
-        return bounce();
+        bounce();
+        return;
       }
 
       // check next block?
@@ -2091,7 +2213,7 @@ function Survivor() {
       // this should be only a Block() instance.
       if (item && !item.data.dead) {
         // console.log('spaceball hit block');
-        return bounce();
+        bounce();
       }
 
     }
@@ -2146,13 +2268,13 @@ function Survivor() {
 
     }
 
-    function pixelCollisionCheck(oOptions) {
+    function pixelCollisionCheck(localOptions) {
 
       var hit,
           collision = game.objects.collision;
 
       hit = collision.checkSprites({
-         object1: oOptions,
+         object1: localOptions,
          object2: {
            // HACK: note re-use of ship pixel data here. It's close enough. :D
            type: 'ship',
@@ -2167,9 +2289,9 @@ function Survivor() {
 
     }
 
-    function init() {
+    function initSpaceBall() {
 
-      var velocity = (game.data.NODE_WIDTH/16) * (Math.random() > 0.5 ? 1 : -1) * game.objects.gameLoop.data.GAME_SPEED;
+      var velocity = (game.data.NODE_WIDTH / 16) * (Math.random() > 0.5 ? 1 : -1) * game.objects.gameLoop.data.GAME_SPEED;
 
       if (!o) {
 
@@ -2186,7 +2308,7 @@ function Survivor() {
       startAttack();
 
       // append to DOM
-      // game.dom.worldFragment.appendChild(o);
+      game.dom.worldFragment.appendChild(o);
 
     }
 
@@ -2194,7 +2316,7 @@ function Survivor() {
 
       // you can't kill a roach, man.
 
-      init();
+      initSpaceBall();
 
       // show right away if it should be visible, too
 
@@ -2208,7 +2330,7 @@ function Survivor() {
     }
 
     // hack/convenience: start right away?
-    init();
+    initSpaceBall();
 
     // hack/testing
     startAttack();
@@ -2218,7 +2340,7 @@ function Survivor() {
       bounce: bounce,
       data: data,
       hittable: hittable,
-      init: init,
+      init: initSpaceBall,
       pixelCollisionCheck: pixelCollisionCheck,
       restore: restore,
       startAttack: startAttack
@@ -2337,14 +2459,6 @@ function Survivor() {
 
         // scroll the world.
 
-/*
-        if (is_firefox && features.transform.prop) {
-          game.dom.world.style[features.transform.prop] = 'translate(-' + x + 'px, -' + y + 'px)';
-        } else {
-          window.scrollTo(x, y);
-        }
-*/
-
         window.scrollTo(x, y);
 
         refreshVisibleGrid();
@@ -2360,19 +2474,19 @@ function Survivor() {
       var targetX,
           targetY;
 
-      if (x < data.coords.width/2) {
+      if (x < data.coords.width / 2) {
         targetX = 0;
       } else {
-        targetX = parseInt(x - data.coords.width/2, 10);
-      } 
-
-      if (y < data.coords.height/2) {
-        targetY = 0;
-      } else {
-        targetY = parseInt(y - data.coords.height/2, 10);
+        targetX = parseInt(x - (data.coords.width / 2), 10);
       }
 
-/*
+      if (y < data.coords.height / 2) {
+        targetY = 0;
+      } else {
+        targetY = parseInt(y - (data.coords.height / 2), 10);
+      }
+
+      /*
       window.scrollTo(targetX, targetY);
 
       data.coords.lastX = targetX;
@@ -2380,7 +2494,8 @@ function Survivor() {
 
       data.coords.x = targetX;
       data.coords.y = targetY;
-*/
+      */
+
       moveTo(targetX, targetY);
 
     }
@@ -2399,7 +2514,7 @@ function Survivor() {
       newY = Math.min(game.data.world_height, Math.max(0, newY));
 
       if (newX === data.coords.lastX && data.newY === data.coords.lastY) {
-        return false;
+        return;
       }
 
       moveTo(newX, newY);
@@ -2423,7 +2538,7 @@ function Survivor() {
 
     }
 
-    function init() {
+    function initScreen() {
 
       attachEvents();
 
@@ -2435,7 +2550,7 @@ function Survivor() {
 
       centerAtPoint: centerAtPoint,
       data: data,
-      init: init,
+      init: initScreen,
       isInView: isInView,
       moveBy: moveBy,
       moveTo: moveTo,
@@ -2449,7 +2564,7 @@ function Survivor() {
 
     var evt = e || window.event;
 
-    if (typeof evt.preventDefault !== 'undefined') {
+    if (evt.preventDefault !== undefined) {
 
       evt.preventDefault();
 
@@ -2468,18 +2583,18 @@ function Survivor() {
     var keys,
         events,
 
-    // hash for keys being pressed
+       // hash for keys being pressed
        downKeys = {},
 
        // meaningful labels for key values
        keyMap = {
-         'shift': 16,
-         'ctrl': 17,
-         'space': 32,
-         'left': 37,
-         'up': 38,
-         'right': 39,
-         'down': 40
+         shift: 16,
+         ctrl: 17,
+         space: 32,
+         left: 37,
+         up: 38,
+         right: 39,
+         down: 40
        };
 
     events = {
@@ -2487,12 +2602,12 @@ function Survivor() {
       keydown: function(e) {
 
         if (keys[e.keyCode] && keys[e.keyCode].down) {
-          if (typeof downKeys[e.keyCode] === 'undefined') {
+          if (downKeys[e.keyCode] === undefined) {
             downKeys[e.keyCode] = true;
             keys[e.keyCode].down(e);
           }
-          if (typeof keys[e.keyCode].allowEvent === 'undefined') {
-            return stopEvent(e);
+          if (keys[e.keyCode].allowEvent === undefined) {
+            stopEvent(e);
           }
         }
 
@@ -2500,13 +2615,13 @@ function Survivor() {
 
       keyup: function(e) {
 
-        if (typeof downKeys[e.keyCode] !== 'undefined' && keys[e.keyCode]) {
+        if (downKeys[e.keyCode] !== undefined && keys[e.keyCode]) {
           delete downKeys[e.keyCode];
           if (keys[e.keyCode].up) {
             keys[e.keyCode].up(e);
           }
-          if (typeof keys[e.keyCode].allowEvent === 'undefined') {
-            return stopEvent(e);
+          if (keys[e.keyCode].allowEvent === undefined) {
+            stopEvent(e);
           }
         }
 
@@ -2519,7 +2634,7 @@ function Survivor() {
       // NOTE: Each function gets an (e) event argument.
 
       // shift
-      '16': {
+      16: {
 
         allowEvent: true, // don't use stopEvent()
 
@@ -2538,7 +2653,7 @@ function Survivor() {
       },
 
       // ctrl (alternate for shift key)
-      '17': {
+      17: {
 
         allowEvent: true, // don't use stopEvent()
 
@@ -2557,7 +2672,7 @@ function Survivor() {
       },
 
       // left
-      '37': {
+      37: {
 
         down: function() {
 
@@ -2575,7 +2690,7 @@ function Survivor() {
       },
 
       // up
-      '38': {
+      38: {
 
         down: function() {
 
@@ -2593,7 +2708,7 @@ function Survivor() {
       },
 
       // right
-      '39': {
+      39: {
 
         down: function() {
 
@@ -2611,7 +2726,7 @@ function Survivor() {
       },
 
       // down
-      '40': {
+      40: {
 
         down: function() {
 
@@ -2629,7 +2744,7 @@ function Survivor() {
       },
 
       // space bar!
-      '32': {
+      32: {
 
         down: function() {
 
@@ -2644,7 +2759,7 @@ function Survivor() {
     function isDown(labelOrCode) {
 
       // check for a pressed key based on '37' or 'left', etc.
-      return (typeof keyMap[labelOrCode] !== 'undefined' ? downKeys[keyMap[labelOrCode]] : downKeys[labelOrCode]);
+      return (keyMap[labelOrCode] !== undefined ? downKeys[keyMap[labelOrCode]] : downKeys[labelOrCode]);
 
     }
 
@@ -2672,7 +2787,7 @@ function Survivor() {
 
     // init?
 
-    function init() {
+    function initKeyboardMonitor() {
 
       attachEvents();
 
@@ -2680,7 +2795,7 @@ function Survivor() {
 
     return {
 
-      init: init,
+      init: initKeyboardMonitor,
       isDown: isDown,
       releaseAll: releaseAll
 
@@ -2710,8 +2825,8 @@ function Survivor() {
       y: oOptions.y,
       w: 96,
       h: 80,
-      vX: game.data.NODE_WIDTH/2 * oOptions.vX,
-      vY: game.data.NODE_HEIGHT/2 * oOptions.vY
+      vX: (game.data.NODE_WIDTH / 2) * oOptions.vX,
+      vY: (game.data.NODE_HEIGHT / 2) * oOptions.vY
 
     };
 
@@ -2787,7 +2902,7 @@ function Survivor() {
 
     }
 
-    function init() {
+    function initBigExplosion() {
 
       o = bigExplosionTemplate.cloneNode(true);
 
@@ -2798,7 +2913,7 @@ function Survivor() {
 
     }
 
-    init();
+    initBigExplosion();
 
     return {
       data: data,
@@ -2832,7 +2947,7 @@ function Survivor() {
       if (features.audio) {
 
         if (Math.random() > 0.85) {
-          soundSprites.playBoom(parseInt(Math.random()*10, 10));
+          soundSprites.playBoom(parseInt(Math.random() * 10, 10));
           // TODO: pan
         }
 
@@ -2878,9 +2993,9 @@ function Survivor() {
         // create several explosions over time
         createExplosion();
 
-        for (i=0; i<maxObjects; i++) {
-          window.setTimeout(createExplosion, (i+1)*50);
-          window.setTimeout(createExplosion, (i+1)*50);
+        for (i = 0; i < maxObjects; i++) {
+          window.setTimeout(createExplosion, (i + 1) * 50);
+          window.setTimeout(createExplosion, (i + 1) * 50);
         }
 
       }
@@ -2905,7 +3020,7 @@ function Survivor() {
 
       var i, j;
 
-      for (i=0, j=objects.explosions.length; i<j; i++) {
+      for (i = 0, j = objects.explosions.length; i < j; i++) {
         objects.explosions[i].destruct();
       }
 
@@ -2913,7 +3028,7 @@ function Survivor() {
 
     }
 
-    function end() {
+    function endLevelEndSequence() {
 
       var oEnd,
           oBody,
@@ -2922,7 +3037,7 @@ function Survivor() {
 
       // complete.
       if (data.waiting) {
-        return false;
+        return;
       }
 
       data.waiting = true;
@@ -2945,7 +3060,7 @@ function Survivor() {
 
       oEnd.style.display = 'block';
 
-      oBody.style.marginTop = -parseInt(oBody.offsetHeight/2, 10) + 'px';
+      oBody.style.marginTop = -parseInt(oBody.offsetHeight / 2, 10) + 'px';
 
       game.objects.gameLoop.pause();
 
@@ -2977,14 +3092,14 @@ function Survivor() {
     function animate() {
 
       if (data.waiting || !data.active) {
-        return false;
+        return;
       }
 
       var i, j,
           isComplete,
           position;
 
-      for (i=0, j=objects.explosions.length; i<j; i++) {
+      for (i = 0, j = objects.explosions.length; i < j; i++) {
 
         isComplete = objects.explosions[i] && objects.explosions[i].animate();
 
@@ -3000,7 +3115,7 @@ function Survivor() {
       }
 
       if (new Date() - runTime > data.maxRuntime) {
-        end();
+        endLevelEndSequence();
       }
 
     }
@@ -3094,7 +3209,7 @@ function Survivor() {
 
     }
 
-    for (i=0, j=directions.length; i<j; i++) {
+    for (i = 0, j = directions.length; i < j; i++) {
 
       targetCol = col + directions[i][0];
       targetRow = row + directions[i][1];
@@ -3114,7 +3229,7 @@ function Survivor() {
     }
 
    // edge case: all spaces occupied? try recursing with a random direction.
-   direction = directions[parseInt(Math.random()*directions.length, 10)];
+   direction = directions[parseInt(Math.random() * directions.length, 10)];
 
    console.log('recursing with ', col + direction[0], row + direction[1]);
 
@@ -3143,7 +3258,7 @@ function Survivor() {
 
     function check(row, col) {
 
-      return (typeof data.pixelMap[row] !== 'undefined' && data.pixelMap[row] && typeof data.pixelMap[row][col] !== 'undefined' && data.pixelMap[row][col]);
+      return (data.pixelMap[row] !== undefined && data.pixelMap[row] && data.pixelMap[row][col] !== undefined && data.pixelMap[row][col]);
 
     }
 
@@ -3854,10 +3969,10 @@ function Survivor() {
         ]
 
       }
-      
+
     ];
 
-    for (i=0, j=data.length; i<j; i++) {
+    for (i = 0, j = data.length; i < j; i++) {
       spriteData[data[i].id] = new SpriteData(data[i]);
     }
 
@@ -3882,8 +3997,8 @@ function Survivor() {
 
       result = {
 
-        col: Math.max(0, Math.min(game.data.world_cols, Math.floor(x/game.data.NODE_WIDTH))),
-        row: Math.max(0, Math.min(game.data.world_rows, Math.floor(y/game.data.NODE_HEIGHT)))
+        col: Math.max(0, Math.min(game.data.world_cols, Math.floor(x / game.data.NODE_WIDTH))),
+        row: Math.max(0, Math.min(game.data.world_rows, Math.floor(y / game.data.NODE_HEIGHT)))
 
       };
 
@@ -3893,10 +4008,9 @@ function Survivor() {
 
     function getIntersect(x,y) {
 
-      var location,
-          mapItem;
+      var location;
 
-      if (typeof x === 'undefined' || typeof y === 'undefined') {
+      if (x === undefined || y === undefined) {
         console.log('getIntersect(): WARN: x/y undefined');
         return {
           location: null,
@@ -3905,10 +4019,6 @@ function Survivor() {
       }
 
       location = xyToRowCol(x, y);
-
-      // is there an object on the map here?
-
-      mapItem = (game.data.map[location.row][location.col] || null);
 
       return {
         row: location.row,
@@ -3939,24 +4049,19 @@ function Survivor() {
           }
         }
 
-      } else {
-
-        // point 1 is to the right.
-
-        if (point2.x + point2.w >= point1.x) {
-          // point 2 overlaps point 1 on x.
-          if (point2.y < point1.y) {
-            // point 2 is above point 1.
-            result = (point2.y + point2.h >= point1.y);
-          } else {
-            // point 2 is below point 1.
-            result = (point1.y + point1.h >= point2.y);
-          }
+      // point 1 is to the right.
+      } else if (point2.x + point2.w >= point1.x) {
+        // point 2 overlaps point 1 on x.
+        if (point2.y < point1.y) {
+          // point 2 is above point 1.
+          result = (point2.y + point2.h >= point1.y);
         } else {
-          // no overlap?
-          result = false;
+          // point 2 is below point 1.
+          result = (point1.y + point1.h >= point2.y);
         }
-
+      } else {
+        // no overlap?
+        result = false;
       }
 
       return result;
@@ -4075,45 +4180,38 @@ function Survivor() {
 
         }
 
-      } else {
+      } else if (sprite2.x + sprite2.w >= sprite1.x) {
 
-        // sprite 1 is to the right.
+        overlap.sprite2.xOffset = 0;
+        overlap.sprite1.xOffset = deltaX;
 
-        if (sprite2.x + sprite2.w >= sprite1.x) {
+        // partial coverage of sprite 2.
 
-          overlap.sprite2.xOffset = 0;
-          overlap.sprite1.xOffset = deltaX;
+        if (sprite2.y < sprite1.y) {
 
-          // partial coverage of sprite 2.
+          overlap.sprite2.yOffset = 0;
+          overlap.sprite1.yOffset = deltaY;
 
-          if (sprite2.y < sprite1.y) {
+          // TODO: remove this check since it should always be true?
+          if (sprite2.y + sprite2.h >= sprite1.y) {
 
-            overlap.sprite2.yOffset = 0;
-            overlap.sprite1.yOffset = deltaY;
-
-            // TODO: remove this check since it should always be true?
-            if (sprite2.y + sprite2.h >= sprite1.y) {
-
-              overlap.sprite2.yOffset = -deltaY;
-              overlap.sprite1.yOffset = 0;
-
-            } else {
-
-              // edge case?
-              overlap.sprite2.yOffset = 0;
-              overlap.sprite1.yOffset = -deltaY;
-
-            }
+            overlap.sprite2.yOffset = -deltaY;
+            overlap.sprite1.yOffset = 0;
 
           } else {
 
-            overlap.sprite2.yOffset = deltaY;
-            overlap.sprite1.yOffset = 0;
+            // edge case?
+            overlap.sprite2.yOffset = 0;
+            overlap.sprite1.yOffset = -deltaY;
 
           }
 
-        }
+        } else {
 
+          overlap.sprite2.yOffset = deltaY;
+          overlap.sprite1.yOffset = 0;
+
+        }
 
       }
 
@@ -4152,18 +4250,18 @@ function Survivor() {
 
       var s1X, s1Y, s2X, s2Y;
 
-      for (i=0, j=max_height; i<j && !pixel_overlap; i++) {
-        for (k=0, l=max_width; k<l && !pixel_overlap; k++) {
+      for (i = 0, j = max_height; i < j && !pixel_overlap; i++) {
+        for (k = 0, l = max_width; k < l && !pixel_overlap; k++) {
           s1X = k - overlap.sprite1.xOffset;
           s1Y = i - overlap.sprite1.yOffset;
           s2X = k - overlap.sprite2.xOffset;
           s2Y = i - overlap.sprite2.yOffset;
           if (s1X >= 0 && s1X < sprite1Data.data.width && s1Y >= 0 && s1Y < sprite1Data.data.height && s2X >= 0 && s2X < sprite2Data.data.width && s2Y >= 0 && s2Y < sprite2Data.data.height) {
-//            console.log('[ loop row/col ' + i + ', ' + k +']: comparing ' + s1X + ', ' + s1Y + ' to ' + s2X + ', ' + s2Y);
+            // console.log('[ loop row/col ' + i + ', ' + k +']: comparing ' + s1X + ', ' + s1Y + ' to ' + s2X + ', ' + s2Y);
             pixel_test = (sprite1Data.check(s1Y, s1X) && sprite2Data.check(s2Y, s2X));
             if (pixel_test) {
               if (PERFORMANCE_MODE || DEBUG_MODE) {
-                console.log('FOUND HIT at loop row/col ' + i + ', ' + k +', comparing ' + s1X + ', ' + s1Y + ' to ' + s2X + ', ' + s2Y);
+                console.log('FOUND HIT at loop row/col ' + i + ', ' + k + ', comparing ' + s1X + ', ' + s1Y + ' to ' + s2X + ', ' + s2Y);
                 console.log('sprite1, sprite2', sprite1, sprite2);
                 console.log('delta X, Y, W, H: ' + deltaX + ', ' + deltaY + ', ' + deltaW + ', ' + deltaH);
                 console.log('overlap data', overlap.sprite1, overlap.sprite2);
@@ -4194,7 +4292,7 @@ function Survivor() {
         intersects.push(getIntersect(point.x, point.y + point.h));
         intersects.push(getIntersect(point.x + point.w, point.y + point.h));
 
-        for (i=0; i<intersects.length; i++) {
+        for (i = 0; i < intersects.length; i++) {
           // mark neighbouring offsets
           intersects[i].isNeighbour = true;
         }
@@ -4202,7 +4300,7 @@ function Survivor() {
       }
 
       // default case: go with the midpoint of the thing.
-      intersects.push(getIntersect(point.x + (point.w/2), point.y + (point.h/2)));
+      intersects.push(getIntersect(point.x + (point.w / 2), point.y + (point.h / 2)));
 
       return intersects;
 
@@ -4246,8 +4344,8 @@ function Survivor() {
       y: oOptions.y,
       w: oOptions.w,
       h: oOptions.h,
-      vX: game.data.NODE_WIDTH/2 * oOptions.vX,
-      vY: game.data.NODE_HEIGHT/2 * oOptions.vY,
+      vX: (game.data.NODE_WIDTH / 2) * oOptions.vX,
+      vY: (game.data.NODE_HEIGHT / 2) * oOptions.vY,
       row: null,
       col: null,
       lastX: null,
@@ -4259,18 +4357,16 @@ function Survivor() {
 
     var nodeParent = game.dom.world;
 
-    var frame = 0;
-
     // die when fire hits end of screen?
 
     function hide() {
 
       if (!data.visible) {
-        return false;
+        return;
       }
       data.visible = false;
       nodeParent.removeChild(o);
-      o.style.display = 'none';
+      o.style.visibility = 'hidden';
 
     }
 
@@ -4283,13 +4379,26 @@ function Survivor() {
 
       if (o) {
 
-        data.lastX = x;
-        data.lastY = y;
-
         location = game.objects.collision.xyToRowCol(x, y);
 
-        o.style.left = x + 'px';
-        o.style.top = y + 'px';
+        if (USE_TRANSFORM) {
+
+          o.style[features.transform.prop] = 'translate3d(' + Math.floor(x) + 'px, ' + Math.floor(y) + 'px, 0px)';
+
+        } else {
+
+          if (data.lastX !== x) {
+            o.style.left = x + 'px';
+          }
+
+          if (data.lastY !== y) {
+            o.style.top = y + 'px';
+          }
+
+        }
+
+        data.lastX = x;
+        data.lastY = y;
 
         if (location.col !== data.col || location.row !== data.row) {
 
@@ -4321,12 +4430,11 @@ function Survivor() {
 
     }
 
-    function reset() {
+    function resetShipGunFire() {
 
       hide();
 
       data.active = false;
-      frame = 0;
 
       moveTo(0,0);
 
@@ -4347,7 +4455,7 @@ function Survivor() {
 
       // called when end of screen hit, or object hit
       data.dead = true;
-      reset();
+      resetShipGunFire();
       destruct();
 
     }
@@ -4420,7 +4528,7 @@ function Survivor() {
           // TODO: includeNeighbours: true ?
         });
 
-        for (i=0, j=intersects.length; i<j; i++) {
+        for (i = 0, j = intersects.length; i < j; i++) {
 
           item = game.data.map[intersects[i].row][intersects[i].col];
 
@@ -4643,8 +4751,8 @@ function Survivor() {
         }
 
         data.lastCollisionResult = {
-          'hit': hit,
-          'incrementPitch': incrementPitch
+          hit: hit,
+          incrementPitch: incrementPitch
         };
 
       }
@@ -4657,7 +4765,7 @@ function Survivor() {
 
       // may be inactive, or died and awaiting cleanup
       if (!data.active) {
-        return false;
+        return;
       }
 
       // increase frame count, move vX + vY
@@ -4668,16 +4776,6 @@ function Survivor() {
 
     }
 
-    function init() {
-
-      // append to DOM
-      // game.dom.world.appendChild(o);
-
-    }
-
-    // hack/convenience: start right away?
-    init();
-
     fire();
 
     objectInterface = {
@@ -4685,8 +4783,7 @@ function Survivor() {
       collisionCheck: collisionCheck,
       data: data,
       die: die,
-      hittable: hittable,
-      init: init
+      hittable: hittable
     };
 
     return objectInterface;
@@ -4752,7 +4849,7 @@ function Survivor() {
       hidden: 'hidden'
     };
 
-/*
+    /*
     function setPosition(oOptions) {
 
       var x, y;
@@ -4767,7 +4864,7 @@ function Survivor() {
       o.style.top = y + 'px';
 
     }
-*/
+    */
 
     function hide() {
 
@@ -4790,7 +4887,7 @@ function Survivor() {
 
     }
 
-    function reset() {
+    function resetShip() {
 
       data.dead = false;
 
@@ -4810,8 +4907,8 @@ function Survivor() {
           screenXAbs = Math.abs(screenX),
           screenY = game.objects.screen.data.coords.y,
           screenYAbs = Math.abs(screenY),
-          screenWThird = screenW/3,
-          screenHThird = screenH/3;
+          screenWThird = screenW / 3,
+          screenHThird = screenH / 3;
 
       var vX = data.vX;
       var vY = data.vY;
@@ -4823,7 +4920,15 @@ function Survivor() {
       deltaY = y - data.y;
 
       if (data.lastX === x && data.lastY === y) {
-        return false;
+        return;
+      }
+
+      if (data.lastX !== x) {
+        o.style.left = x + 'px';
+      }
+
+      if (data.lastY !== y) {
+        o.style.top = y + 'px';
       }
 
       data.lastX = x;
@@ -4832,14 +4937,11 @@ function Survivor() {
       data.x = x;
       data.y = y;
 
-      o.style.left = x + 'px';
-      o.style.top = y + 'px';
-
       // console.log(deltaX, screenXAbs, screenW, screenWThird);
 
       // are we near the screen boundary?
 
-      if (deltaX > 0 && x > (screenXAbs + screenW - screenWThird)) {
+      if (deltaX > 0 && x > ((screenXAbs + screenW) - screenWThird)) {
 
         // moving right
 
@@ -4852,7 +4954,7 @@ function Survivor() {
         game.objects.screen.moveBy(vX, 0);
       }
 
-      if (deltaY > 0 && y > (screenYAbs + screenH - screenHThird)) {
+      if (deltaY > 0 && y > ((screenYAbs + screenH) - screenHThird)) {
 
         // moving down
 
@@ -4895,7 +4997,7 @@ function Survivor() {
     function thrust(xDirection, yDirection) {
 
       if (data.dying || data.dead) {
-        return false;
+        return;
       }
 
       if (!data.thrusting) {
@@ -4976,7 +5078,7 @@ function Survivor() {
     function endThrust() {
 
       if (!data.thrusting) {
-        return false;
+        return;
       }
 
       utils.css.remove(o, css.thrusting);
@@ -5010,7 +5112,7 @@ function Survivor() {
 
       var i, j;
 
-      for (i=0, j=objects.shipGunfire.length; i<j; i++) {
+      for (i = 0, j = objects.shipGunfire.length; i < j; i++) {
 
         objects.shipGunfire[i].die();
 
@@ -5032,7 +5134,7 @@ function Survivor() {
 
         // console.log('animating ' + items.length + ' gunfire objects');
 
-        for (i=0, j=items.length; i<j; i++) {
+        for (i = 0, j = items.length; i < j; i++) {
           // do yo' thang.
           items[i].animate();
         }
@@ -5044,7 +5146,7 @@ function Survivor() {
     function startFire() {
 
       if (data.firing) {
-        return false;
+        return;
       }
 
       data.firing = true;
@@ -5054,7 +5156,7 @@ function Survivor() {
     function endFire() {
 
       if (!data.firing) {
-        return false;
+        return;
       }
 
       data.firing = false;
@@ -5066,12 +5168,12 @@ function Survivor() {
     function fire() {
 
       if (!data.firing || data.dying || data.dead) {
-        return false;
+        return;
       }
 
       // for alignment with ship sprite...
-      var xOffset = 12;
-      var yOffset = 12;
+      var xOffset = 13;
+      var yOffset = 13;
 
       // create two new fire objects, on opposite axes.
 
@@ -5084,8 +5186,8 @@ function Survivor() {
         x: data.x + xOffset,
         y: data.y + yOffset,
         // TODO: Review w/h
-        w: 8,
-        h: 8
+        w: 7,
+        h: 7
       }));
 
       // mirror gunfire
@@ -5094,8 +5196,8 @@ function Survivor() {
         vY: yDir * -1,
         x: data.x + xOffset,
         y: data.y + yOffset,
-        w: 8,
-        h: 8
+        w: 7,
+        h: 7
       }));
 
     }
@@ -5149,7 +5251,7 @@ function Survivor() {
 
       if (data.dying || data.dead) {
         // already underway or done.
-        return false;
+        return;
       }
 
       var i, j,
@@ -5163,7 +5265,7 @@ function Survivor() {
            [1,1],
            [0,1],
            [-1,1],
-           [-1,0] 
+           [-1,0]
           ];
 
       data.dying = true;
@@ -5182,7 +5284,7 @@ function Survivor() {
 
         objects.explosion = [];
 
-        for (i=0, j=directions.length; i<j; i++) {
+        for (i = 0, j = directions.length; i < j; i++) {
           objects.explosion.push(new BigExplosion({
             animationModulus: 6,
             node: game.dom.world,
@@ -5217,11 +5319,11 @@ function Survivor() {
       // also, stop any velocity that may be applied.
       game.objects.ship.stop();
 
-//      hide();
+      // hide();
 
       moveTo(game.data.NODE_WIDTH * Math.floor(game.objects.ship.data.col), game.data.NODE_HEIGHT * Math.floor(game.objects.ship.data.row));
 
-//      show();
+      // show();
 
     }
 
@@ -5237,7 +5339,7 @@ function Survivor() {
 
         window.setTimeout(function() {
           findSafeRespawnLocation();
-          reset();
+          resetShip();
         }, 500);
 
       }
@@ -5249,14 +5351,14 @@ function Survivor() {
       var i, j;
       var inactive = 0;
 
-      for (i=0, j=objects.explosion.length; i<j; i++) {
+      for (i = 0, j = objects.explosion.length; i < j; i++) {
         inactive += objects.explosion[i].animate();
       }
 
       if (inactive >= objects.explosion.length) {
 
         // all objects have finished animating.
-        for (i=0, j=objects.explosion.length; i<j; i++) {
+        for (i = 0, j = objects.explosion.length; i < j; i++) {
           objects.explosion[i].destruct();
         }
 
@@ -5301,7 +5403,7 @@ function Survivor() {
 
       if (items.length) {
 
-        for (i=0, j=items.length; i<j; i++) {
+        for (i = 0, j = items.length; i < j; i++) {
 
           result = objects.shipGunfire[i].collisionCheck();
 
@@ -5349,7 +5451,7 @@ function Survivor() {
 
       // remove dead items from the array
       if (toRemove.length) {
-        for (i=toRemove.length-1; i>=0; i--) {
+        for (i = toRemove.length - 1; i >= 0; i--) {
           objects.shipGunfire.splice(toRemove[i], 1);
         }
       }
@@ -5382,7 +5484,7 @@ function Survivor() {
           includeNeighbours: true
         });
 
-        for (i=0, j=intersects.length; i<j; i++) {
+        for (i = 0, j = intersects.length; i < j; i++) {
 
           item = game.data.map[intersects[i].row][intersects[i].col];
 
@@ -5410,7 +5512,8 @@ function Survivor() {
 
                 if (hit) {
                   console.log('ship: pixel-level collision check with item', item);
-                  return game.objects.ship.die();
+                  game.objects.ship.die();
+                  return;
                 }
 
               } else {
@@ -5418,7 +5521,8 @@ function Survivor() {
                 // kill the ship?
                 console.log('ship collision: hittable grid item', item);
 
-                return game.objects.ship.die();
+                game.objects.ship.die();
+                return;
 
               }
 
@@ -5428,7 +5532,7 @@ function Survivor() {
 
             // check moving grid items
 
-//            if (!intersects[i].isNeighbour) {
+            // if (!intersects[i].isNeighbour) {
 
               // look only at midpoint, exclude neighbours...
 
@@ -5458,7 +5562,8 @@ function Survivor() {
 
                 if (hit) {
                   console.log('ship hit moving item', mapObjectItem);
-                  return game.objects.ship.die();
+                  game.objects.ship.die();
+                  return;
                 }
 
               } else {
@@ -5483,14 +5588,15 @@ function Survivor() {
 
                   if (hit) {
                     console.log('spaceball hit ship');
-                    return game.objects.ship.die();
+                    game.objects.ship.die();
+                    return;
                   }
 
                 }
 
               }
 
- //           }
+              // }
 
           }
 
@@ -5510,7 +5616,7 @@ function Survivor() {
 
         if (intersects && intersects.length) {
 
-          for (i=0, j=intersects.length; i<j; i++) {
+          for (i = 0, j = intersects.length; i < j; i++) {
 
             // whether moving or not - did we hit turret gunfire?
 
@@ -5540,37 +5646,34 @@ function Survivor() {
 
               if (hit) {
                 console.log('ship hit turret gunfire');
-                return game.objects.ship.die();
+                game.objects.ship.die();
+                return;
               }
 
-            } else {
+            // don't check neighbouring locations, in this case...
+            } else if (!intersects[i].isNeighbour) {
 
-              // don't check neighbouring locations, in this case...
+              // did we hit a spaceball?
+              mapObjectItem = game.objects.spaceBallMap.check(intersects[i].row, intersects[i].col);
 
-              if (!intersects[i].isNeighbour) {
+              if (mapObjectItem) {
 
-                // did we hit a spaceball?
-                mapObjectItem = game.objects.spaceBallMap.check(intersects[i].row, intersects[i].col);
+                console.log('found spaceball');
 
-                if (mapObjectItem) {
+                // we have an object. do a collision check.
+                // hit = mapObjectItem.hittable();
 
-                  console.log('found spaceball');
+                hit = mapObjectItem.pixelCollisionCheck({
+                  type: 'ship',
+                  x: data.x - (data.vX * 0.5),
+                  y: data.y - (data.vY * 0.5),
+                  w: data.w,
+                  h: data.h
+                });
 
-                  // we have an object. do a collision check.
-                  // hit = mapObjectItem.hittable();
-
-                  hit = mapObjectItem.pixelCollisionCheck({
-                    type: 'ship',
-                    x: data.x - (data.vX * 0.5),
-                    y: data.y - (data.vY * 0.5),
-                    w: data.w,
-                    h: data.h
-                  });
-
-                  if (hit) {
-                    return game.objects.ship.die();
-                  }
-
+                if (hit) {
+                  game.objects.ship.die();
+                  return;
                 }
 
               }
@@ -5598,14 +5701,14 @@ function Survivor() {
 
       if (col !== data.col || row !== data.row) {
 
-        // broadcast event?        
+        // broadcast event?
         data.col = col;
         data.row = row;
 
       }
 
-      targetX = (w * data.col) + (w * (x/w));
-      targetY = (h * data.row) + (h * (y/h));
+      targetX = (w * data.col) + (w * (x / w));
+      targetY = (h * data.row) + (h * (y / h));
 
       // limit ship x/y to world dimensions
 
@@ -5672,7 +5775,7 @@ function Survivor() {
         }
 
       }
-    
+
     }
 
     function setDefaultPosition() {
@@ -5684,15 +5787,15 @@ function Survivor() {
       w = game.objects.screen.data.coords.width;
       h = game.objects.screen.data.coords.height;
 
-      x = (parseInt(w/2, 10) - game.data.NODE_WIDTH);
-      y = (parseInt(h/2, 10) - game.data.NODE_HEIGHT);
+      x = (parseInt(w / 2, 10) - game.data.NODE_WIDTH);
+      y = (parseInt(h / 2, 10) - game.data.NODE_HEIGHT);
 
       // HACK
       x = 32 * DEFAULT_HOME_COL;
       y = 32 * DEFAULT_HOME_ROW;
 
-      col = Math.floor(x/game.data.NODE_WIDTH);
-      row = Math.floor(y/game.data.NODE_HEIGHT);
+      col = Math.floor(x / game.data.NODE_WIDTH);
+      row = Math.floor(y / game.data.NODE_HEIGHT);
 
       data.col = col;
       data.row = row;
@@ -5740,7 +5843,7 @@ function Survivor() {
 
     }
 
-    function init() {
+    function initShip() {
 
       o = document.createElement('div');
       o.className = 'ship';
@@ -5768,13 +5871,13 @@ function Survivor() {
       maybeFire: maybeFire,
       objects: objects,
       startFire: startFire,
-      init: init,
+      init: initShip,
       isThrusting: isThrusting,
       endThrust: endThrust,
       moveBy: moveBy,
       moveTo: moveTo,
       getNode: getNode,
-      reset: reset,
+      reset: resetShip,
       stop: stop,
       thrust: thrust,
       setDefaultPosition: setDefaultPosition,
@@ -5793,7 +5896,7 @@ function Survivor() {
 
     var o;
 
-    var frameCount = 0;
+    // var frameCount = 0;
 
     var css = {
       exploding: 'exploding',
@@ -5853,40 +5956,34 @@ function Survivor() {
 
       if (!data.exploded && data.exploding) {
 
-        frameCount++;
+        // frameCount++;
 
-//        if (frameCount % 2 === 0) {
+        // if (frameCount % 2 === 0) {
 
-          o.style.backgroundPosition = '0px ' + (data.explosionFrame * -32) + 'px';
-          data.explosionFrame++;
-          if (data.explosionFrame >= data.explosionFrames) {
-            data.explosionFrame = 0;
-          }
+        o.style.backgroundPosition = '0px ' + (data.explosionFrame * -32) + 'px';
+        data.explosionFrame++;
+        if (data.explosionFrame >= data.explosionFrames) {
+          data.explosionFrame = 0;
+        }
 
-//        }
+        // }
 
       }
 
     }
 
-/*
-    function getNode() {
-      return o;
-    }
-*/
+    function pixelCollisionCheck(localOptions) {
 
-    function pixelCollisionCheck(oOptions) {
-
-      var hit;
+      var hitObject;
       var collision = game.objects.collision;
 
       var wallType = (data.type + '-' + data.subType).replace(' ', '-');
-      wallType = wallType.replace(/wall\-type\-[234]/i, 'wall-type-generic');
+      wallType = wallType.replace(/wall-type-[234]/i, 'wall-type-generic');
 
       // console.log('comparing ' + oOptions.type + ' <-> ' + wallType);
 
-      hit = collision.checkSprites({
-         object1: oOptions,
+      hitObject = collision.checkSprites({
+         object1: localOptions,
          object2: {
            type: wallType,
            x: data.x,
@@ -5896,7 +5993,7 @@ function Survivor() {
          }
       });
 
-      return hit;
+      return hitObject;
 
     }
 
@@ -5910,7 +6007,7 @@ function Survivor() {
       return !data.exploded;
     }
 
-    function init() {
+    function initBaseWall() {
 
       if (!o) {
 
@@ -5923,7 +6020,7 @@ function Survivor() {
 
       }
 
-      dom.worldFragment.appendChild(o);
+      game.dom.worldFragment.appendChild(o);
 
     }
 
@@ -5933,11 +6030,11 @@ function Survivor() {
         data.exploded = false;
       }
 
-      init();
+      initBaseWall();
 
     }
 
-    init();
+    initBaseWall();
 
     return {
       animate: animate,
@@ -5972,7 +6069,7 @@ function Survivor() {
       row = Math.floor(row);
       col = Math.floor(col);
 
-      return typeof map[row] !== 'undefined' && typeof map[row][col] !== 'undefined' ? map[row][col] : null;
+      return map[row] !== undefined && map[row][col] !== undefined ? map[row][col] : null;
 
     }
 
@@ -5982,7 +6079,7 @@ function Survivor() {
 
       var previous;
 
-      if (typeof lastLocation[id] !== 'undefined') {
+      if (lastLocation[id] !== undefined) {
         previous = lastLocation[id];
         if (map[previous.row] && map[previous.row][previous.col]) {
           map[previous.row][previous.col] = null;
@@ -6003,9 +6100,9 @@ function Survivor() {
           col = oOptions.col,
           row = oOptions.row;
 
-      if (typeof id === 'undefined') {
+      if (id === undefined) {
         console.log('registerLocation: id required.');
-        return false;
+        return;
       }
 
       // first, see if this object is already somewhere else, and remove it if so
@@ -6016,9 +6113,9 @@ function Survivor() {
 
       // console.log('registering ' + col + ', ' + row);
 
-      if (typeof map[row] === 'undefined' || typeof map[row][col] === 'undefined') {
+      if (map[row] === undefined || map[row][col] === undefined) {
         console.log('registerLocation(): row/col ' + row + ', ' + col + ' is invalid?');
-        return false;
+        return;
       }
 
       map[row][col] = o;
@@ -6031,13 +6128,13 @@ function Survivor() {
 
     }
 
-    function init() {
+    function initObjectMap() {
 
       var i, j, k, l;
 
-      for (i=0, j=game.data.world_rows; i<j; i++) {
+      for (i = 0, j = game.data.world_rows; i < j; i++) {
         map[i] = [];
-        for (k=0, l=game.data.world_cols; k<l; k++) {
+        for (k = 0, l = game.data.world_cols; k < l; k++) {
           map[i][k] = null;
         }
       }
@@ -6046,14 +6143,14 @@ function Survivor() {
 
     }
 
-    function reset() {
+    function resetObjectMap() {
 
       // just re-init empty array
-      init();
+      initObjectMap();
 
     }
 
-    init();
+    initObjectMap();
 
     return {
 
@@ -6061,7 +6158,7 @@ function Survivor() {
       registerLocation: registerLocation,
       clearLocation: clearLocation,
       map: map,
-      reset: reset
+      reset: resetObjectMap
 
     };
 
@@ -6085,12 +6182,11 @@ function Survivor() {
         data,
         objectInterface,
         directionsMap = {
-          'left': 'horizontal',
-          'right': 'horizontal',
-          'up': 'vertical',
-          'down': 'vertical'
+          left: 'horizontal',
+          right: 'horizontal',
+          up: 'vertical',
+          down: 'vertical'
         },
-        frame = 0,
         nodeParent = game.dom.world;
 
     data = {
@@ -6109,8 +6205,8 @@ function Survivor() {
       turretY: oOptions.turretY,
       xDirection: oOptions.vX,
       yDirection: oOptions.vY,
-      vX: game.data.NODE_WIDTH/10 * oOptions.vX,
-      vY: game.data.NODE_HEIGHT/10 * oOptions.vY,
+      vX: (game.data.NODE_WIDTH / 10) * oOptions.vX,
+      vY: (game.data.NODE_HEIGHT / 10) * oOptions.vY,
       row: oOptions.row,
       col: oOptions.col,
       endRow: null,
@@ -6129,8 +6225,7 @@ function Survivor() {
       if (data.visible) {
         data.visible = false;
         if (o && nodeParent) {
-          nodeParent.removeChild(o);
-          o.style.display = 'none';
+          o.style.visibility = 'hidden';
         }
       }
 
@@ -6141,8 +6236,7 @@ function Survivor() {
       if (!data.visible) {
         data.visible = true;
         if (o && nodeParent) {
-          nodeParent.appendChild(o);
-          o.style.display = 'block';
+          o.style.visibility = 'visible';
         }
       }
 
@@ -6150,10 +6244,10 @@ function Survivor() {
 
     function moveTo(x,y) {
 
-      var location;
+      var location, endX, endY;
 
       if (!data.active) {
-        return false;
+        return;
       }
 
       x = Math.floor(x);
@@ -6167,8 +6261,19 @@ function Survivor() {
 
         if (game.objects.screen.isInView(location.col, location.row)) {
 
-          o.style.left = (data.turretX + x) + 'px';
-          o.style.top = (data.turretY + y) + 'px';
+          endX = data.turretX + x;
+          endY = data.turretY + y;
+
+          if (USE_TRANSFORM) {
+
+            o.style[features.transform.prop] = 'translate3d(' + endX + 'px, ' + endY + 'px, 0px)';
+
+          } else {
+
+            o.style.left = endX + 'px';
+            o.style.top = endY + 'px';
+
+          }
 
           show();
 
@@ -6209,12 +6314,11 @@ function Survivor() {
 
     }
 
-    function reset() {
+    function resetTurretGunfire() {
 
       hide();
 
       data.active = false;
-      frame = 0;
 
       data.x = 0;
       data.y = 0;
@@ -6240,7 +6344,7 @@ function Survivor() {
       }
 
       if (shouldExpire) {
-        reset();
+        resetTurretGunfire();
       }
 
     }
@@ -6252,7 +6356,7 @@ function Survivor() {
 
       if (data.endCol !== null || data.endRow !== null) {
         // this has already been done.
-        return false;
+        return;
       }
 
       var col = data.col,
@@ -6296,13 +6400,13 @@ function Survivor() {
 
     }
 
-    function pixelCollisionCheck(oOptions) {
+    function pixelCollisionCheck(localOptions) {
 
       var hit;
       var collision = game.objects.collision;
 
       hit = collision.checkSprites({
-         object1: oOptions,
+         object1: localOptions,
          object2: {
            type: data.type + '-' + directionsMap[data.subType],
            x: data.turretX + data.x,
@@ -6320,7 +6424,7 @@ function Survivor() {
 
       // may be inactive, or died and awaiting cleanup
       if (!data.active) {
-        return false;
+        return;
       }
 
       show();
@@ -6339,11 +6443,11 @@ function Survivor() {
     function die() {
 
       // called when end of screen hit, or object hit (or turret dies)
-      reset();
+      resetTurretGunfire();
 
     }
 
-/*
+    /*
     function destruct() {
       // remove from the dom, etc.
       if (o) {
@@ -6351,9 +6455,9 @@ function Survivor() {
         o = null;
       }
     }
-*/
+    */
 
-    function init() {
+    function initTurretGunfire() {
 
 
       if (!o) {
@@ -6376,18 +6480,20 @@ function Survivor() {
       // append to DOM
       // parentNode.appendChild(o);
 
+      nodeParent.appendChild(o);
+
     }
 
     function restore() {
 
       data.dead = false;
 
-      init();
+      initTurretGunfire();
 
     }
 
     // hack/convenience: start right away?
-    init();
+    initTurretGunfire();
 
     // fire();
 
@@ -6397,9 +6503,9 @@ function Survivor() {
       data: data,
       die: die,
       fire: fire,
-      init: init,
+      init: initTurretGunfire,
       pixelCollisionCheck: pixelCollisionCheck,
-      reset: reset,
+      reset: resetTurretGunfire,
       restore: restore
     };
 
@@ -6416,7 +6522,7 @@ function Survivor() {
 
     var o;
 
-    var frameCount = 0;
+    // var frameCount = 0;
 
     var css = {
       exploding: 'exploding',
@@ -6430,20 +6536,20 @@ function Survivor() {
 
     var directions = {
       x: {
-        'left': -1,
-        'right': 1
+        left: -1,
+        right: 1
       },
       y: {
-        'up': -1,
-        'down': 1
+        up: -1,
+        down: 1
       }
     };
 
     var directionsMap = {
-      'left': 'vertical',
-      'right': 'vertical',
-      'up': 'horizontal',
-      'down': 'horizontal'
+      left: 'vertical',
+      right: 'vertical',
+      up: 'horizontal',
+      down: 'horizontal'
     };
 
     var _direction = oOptions.subType.split(' ')[1]; // hack-ish :D
@@ -6462,7 +6568,7 @@ function Survivor() {
       wallDirection: directionsMap[_direction],
       points: 500,
       dead: false,
-//      firing: false,
+      // firing: false,
       exploding: false,
       baseExploding: false,
       exploded: false,
@@ -6470,11 +6576,11 @@ function Survivor() {
       explosionFrames: 6
     };
 
-/*
+    /*
     function getNode() {
       return o;
     }
-*/
+    */
 
     // events.gameLoop?
 
@@ -6490,7 +6596,7 @@ function Survivor() {
     function createTurretGunfire() {
 
       if (objects.turretGunfire) {
-        return false;
+        return;
       }
 
       objects.turretGunfire = new TurretGunfire({
@@ -6510,7 +6616,7 @@ function Survivor() {
 
     }
 
-    function pixelCollisionCheck(oOptions) {
+    function pixelCollisionCheck(localOptions) {
 
       if (!data.dead) {
         // hack: while alive, count all pixels as hittable and always return true.
@@ -6519,14 +6625,14 @@ function Survivor() {
         return true;
       }
 
-      var hit;
+      var hitObject;
       var collision = game.objects.collision;
 
       // HACK: Note use of -type-generic-, slightly inaccurate when on -type-1 turrets that have become walls.
-      var wallType = (data.wallType + '-type-generic-'+ data.wallDirection).replace(' ', '-');
+      var wallType = (data.wallType + '-type-generic-' + data.wallDirection).replace(' ', '-');
 
-      hit = collision.checkSprites({
-         object1: oOptions,
+      hitObject = collision.checkSprites({
+         object1: localOptions,
          object2: {
            type: wallType,
            x: data.x,
@@ -6536,7 +6642,7 @@ function Survivor() {
          }
       });
 
-      return hit;
+      return hitObject;
 
     }
 
@@ -6557,7 +6663,7 @@ function Survivor() {
     function die() {
 
       if (data.dead) {
-        return false;
+        return;
       }
 
       data.dead = true;
@@ -6665,9 +6771,9 @@ function Survivor() {
 
       if (data.exploding) {
 
-        frameCount++;
+        // frameCount++;
 
-//        if (frameCount % 2 === 0) {
+        // if (frameCount % 2 === 0) {
 
           // individual turret + base destruction animation
 
@@ -6688,13 +6794,13 @@ function Survivor() {
 
           }
 
-//        }
+        // }
 
       }
 
     }
 
-    function init() {
+    function initTurret() {
 
       if (!o) {
 
@@ -6709,7 +6815,7 @@ function Survivor() {
 
       createTurretGunfire();
 
-      dom.worldFragment.appendChild(o);
+      game.dom.worldFragment.appendChild(o);
 
     }
 
@@ -6740,11 +6846,11 @@ function Survivor() {
       data.exploding = false;
       data.explosionFrame = 0;
 
-      init();
+      initTurret();
 
     }
 
-    init();
+    initTurret();
 
     return {
       animate: animate,
@@ -6784,7 +6890,7 @@ function Survivor() {
       points: 10000
     };
 
-/*
+    /*
     var css = {
 
       wall: {
@@ -6804,16 +6910,17 @@ function Survivor() {
       }
 
     };
-*/
+    */
+
     var typeToConstructor = {
-      'wall': BaseWall,
-      'turret': Turret
+      wall: BaseWall,
+      turret: Turret
     };
 
     var typeToArray = {
       // for storing in objects array
-      'wall': objects.walls,
-      'turret': objects.turrets
+      wall: objects.walls,
+      turret: objects.turrets
     };
 
     function addItem(oOptions) {
@@ -6840,11 +6947,11 @@ function Survivor() {
       var i, j;
 
       if (!data.active || data.dying || data.dead) {
-        return false;
+        return;
       }
 
       // maybe fire
-      for (i=0, j=objects.turrets.length; i<j; i++) {
+      for (i = 0, j = objects.turrets.length; i < j; i++) {
         objects.turrets[i].maybeFire();
       }
 
@@ -6855,18 +6962,18 @@ function Survivor() {
         var i, j;
 
         if (data.dead) {
-          return false;
+          return;
         }
 
         data.dying = false;
         data.dead = true;
         data.frame = 0;
 
-        for (i=0, j=objects.turrets.length; i<j; i++) {
+        for (i = 0, j = objects.turrets.length; i < j; i++) {
           objects.turrets[i].explodeComplete();
         }
 
-        for (i=0, j=objects.walls.length; i<j; i++) {
+        for (i = 0, j = objects.walls.length; i < j; i++) {
           objects.walls[i].explodeComplete();
         }
 
@@ -6883,11 +6990,11 @@ function Survivor() {
       // mark all elements as dying, begin exploding animation
       var i, j;
 
-      for (i=0, j=objects.turrets.length; i<j; i++) {
+      for (i = 0, j = objects.turrets.length; i < j; i++) {
         objects.turrets[i].explode(true);
       }
 
-      for (i=0, j=objects.walls.length; i<j; i++) {
+      for (i = 0, j = objects.walls.length; i < j; i++) {
         objects.walls[i].explode();
       }
 
@@ -6896,7 +7003,7 @@ function Survivor() {
     function die() {
 
       if (!data.active || data.dying || data.dead) {
-        return true;
+        return;
       }
 
       if (features.audio) {
@@ -6926,7 +7033,7 @@ function Survivor() {
 
       // if all turrets shot, then BOOM
       if (!data.active || data.dying || data.dead) {
-        return true;
+        return;
       }
 
       if (objects.turrets.length && data.deadTurretCount >= objects.turrets.length) {
@@ -6936,7 +7043,7 @@ function Survivor() {
 
     }
 
-    function reset() {
+    function resetBase() {
 
       // bring the base back to life, per se
 
@@ -6955,7 +7062,7 @@ function Survivor() {
 
       if (!data.active || (data.dead && !data.dying)) {
         // nothing to do.
-        return false;
+        return;
       }
 
       // animate turret gunfire, OR explosion / death sequence?
@@ -6965,7 +7072,7 @@ function Survivor() {
         // reset...
         data.deadTurretCount = 0;
 
-        for (i=0, j=objects.turrets.length; i<j; i++) {
+        for (i = 0, j = objects.turrets.length; i < j; i++) {
           objects.turrets[i].animate();
           data.deadTurretCount += objects.turrets[i].data.dead;
         }
@@ -6976,11 +7083,11 @@ function Survivor() {
 
         // base dying/explosion sequence
 
-        for (i=0, j=objects.turrets.length; i<j; i++) {
+        for (i = 0, j = objects.turrets.length; i < j; i++) {
           objects.turrets[i].animate();
         }
 
-        for (i=0, j=objects.walls.length; i<j; i++) {
+        for (i = 0, j = objects.walls.length; i < j; i++) {
           objects.walls[i].animate();
         }
 
@@ -7003,7 +7110,7 @@ function Survivor() {
       data: data,
       objects: objects,
       pulse: pulse,
-      reset: reset
+      reset: resetBase
     };
 
   }
@@ -7110,7 +7217,7 @@ function Survivor() {
 
         var i, j;
 
-        for (i=0, j=objects.bases.length; i<j; i++) {
+        for (i = 0, j = objects.bases.length; i < j; i++) {
           objects.bases[i].animate();
         }
 
@@ -7148,7 +7255,7 @@ function Survivor() {
 
         var i, j;
 
-        for (i=0, j=objects.bases.length; i<j; i++) {
+        for (i = 0, j = objects.bases.length; i < j; i++) {
           objects.bases[i].pulse();
         }
 
@@ -7182,8 +7289,8 @@ function Survivor() {
           baseItemObject;
 
       // sanity check
-      if (typeof baseItemMap[char] === 'undefined') {
-        console.log('addBaseItem('+char+'): Illegal map character.');
+      if (baseItemMap[char] === undefined) {
+        console.log('addBaseItem(' + char + '): Illegal map character.');
         return false;
       }
 
@@ -7209,7 +7316,7 @@ function Survivor() {
     function isBaseItem(char) {
 
       // is this a base map character?
-      return (char && typeof baseItemMap[char] !== 'undefined');
+      return (char && baseItemMap[char] !== undefined);
 
     }
 
@@ -7220,7 +7327,7 @@ function Survivor() {
 
       data.activeBaseCount = 0;
 
-      for (i=0, j=objects.bases.length; i<j; i++) {
+      for (i = 0, j = objects.bases.length; i < j; i++) {
         if (objects.bases[i].data.active) {
           data.activeBaseCount++;
         }
@@ -7228,20 +7335,20 @@ function Survivor() {
 
     }
 
-    function reset() {
+    function resetBaseController() {
 
       var i, j;
 
       // revert all bases, etc.
       data.deadBaseCount = 0;
 
-      for (i=0, j=objects.bases.length; i<j; i++) {
+      for (i = 0, j = objects.bases.length; i < j; i++) {
         objects.bases[i].reset();
       }
 
     }
 
-    function init() {
+    function initBaseController() {
 
       createBases();
 
@@ -7252,9 +7359,9 @@ function Survivor() {
       findActiveBases: findActiveBases,
       isBaseItem: isBaseItem,
       addBaseItem: addBaseItem,
-      init: init,
+      init: initBaseController,
       objects: objects,
-      reset: reset
+      reset: resetBaseController
     };
 
   }
@@ -7269,14 +7376,14 @@ function Survivor() {
 
       focus: function() {
 
-        objects.gameLoop.resume();
+        game.objects.gameLoop.resume();
 
       },
 
       blur: function() {
 
-        objects.keyboardMonitor.releaseAll();
-        objects.gameLoop.pause();
+        game.objects.keyboardMonitor.releaseAll();
+        game.objects.gameLoop.pause();
 
       }
 
@@ -7299,7 +7406,7 @@ function Survivor() {
 
     }
 
-    function init() {
+    function initFocusMonitor() {
 
       addEvents();
 
@@ -7307,7 +7414,7 @@ function Survivor() {
 
     return {
 
-      init: init
+      init: initFocusMonitor
 
     };
 
@@ -7389,7 +7496,7 @@ function Survivor() {
 
         oStats.innerHTML = [
           '<br>',
-          '<p>Your score: ' + objects.gameController.getScore() + ' points</p>',
+          '<p>Your score: ' + game.objects.gameController.getScore() + ' points</p>',
           '<br>',
           '<p>Destruction report:</p>',
           '<div class="fixed"><div class="icon type-2 block"></div> Blocks: ' + statsData.block + '</div>',
@@ -7397,11 +7504,11 @@ function Survivor() {
           '<div class="fixed"><div class="icon type-1 wall rightDown"></div> Bases: ' + statsData.base + '</div>',
           '<div class="fixed bad-guy smiley"><div class="icon"></div> Bad guys: ' + statsData.badGuy + '</div>'
         ].join('');
-        
+
         o.style.display = 'block';
 
         // position
-        oStatsBody.style.marginTop = -parseInt(oStats.offsetHeight/2, 10) + 'px';
+        oStatsBody.style.marginTop = -parseInt(oStats.offsetHeight / 2, 10) + 'px';
 
         // objects.gameLoop.pause();
 
@@ -7417,10 +7524,10 @@ function Survivor() {
 
           survivor.reset();
 
-          objects.gameLoop.resume();
+          game.objects.gameLoop.resume();
 
         };
-        
+
       }
 
       return isGameOver;
@@ -7435,7 +7542,7 @@ function Survivor() {
 
     }
 
-    function reset() {
+    function resetGameController() {
 
       // assign defaults to data like lives, smartbombs etc.
 
@@ -7447,7 +7554,7 @@ function Survivor() {
 
     }
 
-    function init() {
+    function initGameController() {
 
       dom.lives = document.getElementById('lives');
       dom.points = document.getElementById('points');
@@ -7461,10 +7568,10 @@ function Survivor() {
 
       addPoints: addPoints,
       data: data,
-      init: init,
+      init: initGameController,
       getScore: getScore,
       refreshUI: refreshUI,
-      reset: reset,
+      reset: resetGameController,
       shipDied: shipDied,
       updateSmartbombs: updateSmartbombs
 
@@ -7547,7 +7654,7 @@ function Survivor() {
 
     function record(type, amount) {
 
-      if (typeof data[type] !== 'undefined') {
+      if (data[type] !== undefined) {
         data[type] += (amount || 1);
       }
 
@@ -7557,24 +7664,24 @@ function Survivor() {
       return data;
     }
 
-    function reset() {
+    function resetStatsController() {
 
       data.blocks = 0;
       data.badGuys = 0;
       data.turrets = 0;
       data.bases = 0;
 
-    }    
+    }
 
     return {
       getStats: getStats,
       record: record,
-      reset: reset
+      reset: resetStatsController
     };
 
   }
 
-  (function DebugPanel() {
+  (function debugPanel() {
 
     var data = {
 
@@ -7617,8 +7724,8 @@ function Survivor() {
 
       bases = game.objects.baseController.objects.bases;
 
-      for (i=0, j=bases.length; i<j; i++) {
-        for (k=0, l=bases[i].objects.turrets.length; k<l; k++) {
+      for (i = 0, j = bases.length; i < j; i++) {
+        for (k = 0, l = bases[i].objects.turrets.length; k < l; k++) {
           if (!bases[i].objects.turrets[k].objects.turretGunfire.data.dead && game.objects.screen.isInView(bases[i].objects.turrets[k].objects.turretGunfire.data.col, bases[i].objects.turrets[k].objects.turretGunfire.data.row)) {
             onScreen++;
           }
@@ -7637,7 +7744,7 @@ function Survivor() {
 
       onScreen = 0;
 
-      for (i=0, j=game.objects.spaceBalls.length; i<j; i++) {
+      for (i = 0, j = game.objects.spaceBalls.length; i < j; i++) {
         if (game.objects.screen.isInView(game.objects.spaceBalls[i].data.col, game.objects.spaceBalls[i].data.row)) {
           onScreen++;
         }
@@ -7647,7 +7754,7 @@ function Survivor() {
 
       onScreen = 0;
 
-      for (i=0, j=game.objects.badGuyController.objects.badGuys.length; i<j; i++) {
+      for (i = 0, j = game.objects.badGuyController.objects.badGuys.length; i < j; i++) {
         if (game.objects.badGuyController.objects.badGuys[i].data.active && game.objects.screen.isInView(game.objects.badGuyController.objects.badGuys[i].data.col, game.objects.badGuyController.objects.badGuys[i].data.row)) {
           onScreen++;
         }
@@ -7663,7 +7770,7 @@ function Survivor() {
 
     }
 
-    function init() {
+    function initDebugPanel() {
 
       var o, i, j,
           items;
@@ -7671,7 +7778,7 @@ function Survivor() {
       o = document.getElementById('debug-panel');
 
       if (!o) {
-        return false;
+        return;
       }
 
       if (!PERFORMANCE_MODE) {
@@ -7686,7 +7793,7 @@ function Survivor() {
 
         items = o.getElementsByTagName('input');
 
-        for (i=0, j=items.length; i<j; i++) {
+        for (i = 0, j = items.length; i < j; i++) {
 
           utils.events.add(items[i], 'click', handleChange);
 
@@ -7709,7 +7816,7 @@ function Survivor() {
 
     }
 
-    init();
+    initDebugPanel();
 
 
   }());
@@ -7721,14 +7828,14 @@ function Survivor() {
         spaceBallCount = DEFAULT_SPACEBALLS,
         freeSpaces = [],
         location,
-        rows = data.map.length,
-        cols = data.map[0].length;
+        rows = game.data.map.length,
+        cols = game.data.map[0].length;
 
     // check for space characters in the map character data.
     // these are safe spaces to occupy.
-    for (i=0, j=cols; i<j; i++) {
-      for (k=0, l=rows; k<l; k++) {
-        if (objects.mapData[k][i] === MAP_FREE_SPACE_CHAR || objects.mapData[k][i] === MAP_ALT_FREE_SPACE_CHAR) {
+    for (i = 0, j = cols; i < j; i++) {
+      for (k = 0, l = rows; k < l; k++) {
+        if (game.objects.mapData[k][i] === MAP_FREE_SPACE_CHAR || game.objects.mapData[k][i] === MAP_ALT_FREE_SPACE_CHAR) {
           freeSpaces.push({
             row: k,
             col: i
@@ -7747,25 +7854,25 @@ function Survivor() {
       x.style.height = '31px';
       x.style.border = '1px solid #66ff66';
       // x.style.background = '#006600';
-      for (i=0, j=freeSpaces.length; i<j; i++) {
+      for (i = 0, j = freeSpaces.length; i < j; i++) {
         tmp = x.cloneNode(false);
-        tmp.style.left = (freeSpaces[i].col * data.NODE_WIDTH) + 'px';
-        tmp.style.top = (freeSpaces[i].row * data.NODE_HEIGHT) + 'px';
-        dom.worldFragment.appendChild(tmp);
+        tmp.style.left = (freeSpaces[i].col * game.data.NODE_WIDTH) + 'px';
+        tmp.style.top = (freeSpaces[i].row * game.data.NODE_HEIGHT) + 'px';
+        game.dom.worldFragment.appendChild(tmp);
       }
 
     }
 
-    for (i=0, j=spaceBallCount; i<j; i++) {
+    for (i = 0, j = spaceBallCount; i < j; i++) {
 
       // choose a random location...
-      location = parseInt(Math.random()*freeSpaces.length, 10);
+      location = parseInt(Math.random() * freeSpaces.length, 10);
 
-      objects.spaceBalls.push(new SpaceBall(freeSpaces[location]));
+      game.objects.spaceBalls.push(new SpaceBall(freeSpaces[location]));
 
       // and remove this item from the array (since it's now occupied)
       freeSpaces.splice(location, 1);
-    
+
     }
 
   }
@@ -7777,18 +7884,18 @@ function Survivor() {
   }
 
   mapTypes = {
-    '0': function() { return new Block(mixin(getArgs(arguments)[0], {type: 'block', subType: 'type-0'})); },
-    '1': function() { return new Block(mixin(getArgs(arguments)[0], {type: 'block', subType: 'type-1'})); },
-    '2': function() { return new Block(mixin(getArgs(arguments)[0], {type: 'block', subType: 'type-2'})); },
-    '3': function() { return new Block(mixin(getArgs(arguments)[0], {type: 'block', subType: 'type-3'})); }
+    0: function() { return new Block(mixin(getArgs(arguments)[0], { type: 'block', subType: 'type-0' })); },
+    1: function() { return new Block(mixin(getArgs(arguments)[0], { type: 'block', subType: 'type-1' })); },
+    2: function() { return new Block(mixin(getArgs(arguments)[0], { type: 'block', subType: 'type-2' })); },
+    3: function() { return new Block(mixin(getArgs(arguments)[0], { type: 'block', subType: 'type-3' })); }
   };
 
   // user-provided map
-  if (window.location.toString().match(/mapData/)) {
+  if (winloc.match(/mapData/)) {
 
-    var str = decodeURI(window.location.toString());
+    var str = decodeURI(winloc);
 
-    mapData = str.substr(str.indexOf('mapData')+8).split('/');
+    mapData = str.substr(str.indexOf('mapData') + 8).split('/');
 
     // for now...
     DEFAULT_HOME_ROW = 1;
@@ -7801,7 +7908,7 @@ function Survivor() {
 
   }
 
-  objects.mapData = mapData;
+  game.objects.mapData = mapData;
 
   function createGrid() {
 
@@ -7813,28 +7920,28 @@ function Survivor() {
 
     console.log('looping through ' + j + ' rows of ' + mapData[0].length + ' characters');
 
-    for (i=0; i<j; i++) {
+    for (i = 0; i < j; i++) {
 
       // data for one row
       l = mapData[i].length;
 
       gridItems[i] = [];
 
-      for (k=0; k<l; k++) {
+      for (k = 0; k < l; k++) {
 
         // find the character and create the relevant object
         char = mapData[i].charAt(k);
 
-        if (char !== ' ' && typeof mapTypes[char] !== 'undefined') {
+        if (char !== ' ' && mapTypes[char] !== undefined) {
 
           gridItems[i].push(mapTypes[char]({
-            'x': k,
-            'y': i
+            x: k,
+            y: i
           }));
 
-        } else if (objects.baseController.isBaseItem(char)) {
+        } else if (game.objects.baseController.isBaseItem(char)) {
 
-          gridItems[i].push(objects.baseController.addBaseItem(char, k, i));
+          gridItems[i].push(game.objects.baseController.addBaseItem(char, k, i));
 
         } else {
 
@@ -7846,7 +7953,7 @@ function Survivor() {
 
     }
 
-    objects.baseController.findActiveBases();
+    game.objects.baseController.findActiveBases();
 
     // set world dimensions
     game.data.world_width = (game.data.NODE_WIDTH * mapData[0].length) + 1;
@@ -7857,25 +7964,25 @@ function Survivor() {
     game.data.world_rows = mapData.length - 1;
 
     // apply to DOM
-    dom.world.style.width = game.data.world_width + 'px';
-    dom.world.style.height = game.data.world_height + 'px';
+    game.dom.world.style.width = game.data.world_width + 'px';
+    game.dom.world.style.height = game.data.world_height + 'px';
 
     console.log('world set to ' + game.data.world_width + ' x ' + game.data.world_height);
 
     // reset the window scroll, if any (may be remembered from last time)
-    objects.screen.moveTo(0,0);
+    game.objects.screen.moveTo(0,0);
 
     return gridItems;
 
   }
 
   function createShip() {
-    objects.ship = new Ship();
-    objects.ship.init();
+    game.objects.ship = new Ship();
+    game.objects.ship.init();
   }
 
   function makeRandomBadGuy(force) {
-    var isActive = objects.gameLoop.isActive();
+    var isActive = game.objects.gameLoop.isActive();
     if ((Math.random() < 0.75 || force) && isActive) {
       console.log('makeRandomBadGuy()');
       game.objects.badGuyController.createBadGuy();
@@ -7887,24 +7994,18 @@ function Survivor() {
 
   function reset() {
 
-    // oh, what a hack! (destroy the world markup)
-
-    // TODO: Hide turret gunfire, which may barf when trying to remove nodes that can't be found after this point.
-
-    dom.world.innerHTML = '';
-
     // reset the maps
-    objects.turretGunfireMap.reset();
-    objects.shipGunfireMap.reset();
-    objects.badGuyMap.reset();
-    objects.spaceBallMap.reset();
+    game.objects.turretGunfireMap.reset();
+    game.objects.shipGunfireMap.reset();
+    game.objects.badGuyMap.reset();
+    game.objects.spaceBallMap.reset();
 
     // reset and re-append objects to the grid as needed
 
     var i, j, k, l;
 
-    for (i=0, j=game.data.map.length; i<j; i++) {
-      for (k=0, l=game.data.map[i].length; k<l; k++) {
+    for (i = 0, j = game.data.map.length; i < j; i++) {
+      for (k = 0, l = game.data.map[i].length; k < l; k++) {
         if (game.data.map[i][k] && game.data.map[i][k].restore) {
           game.data.map[i][k].restore();
         }
@@ -7912,7 +8013,7 @@ function Survivor() {
     }
 
     // reset the spaceballs, too
-    for (i=0, j=game.objects.spaceBalls.length; i<j; i++) {
+    for (i = 0, j = game.objects.spaceBalls.length; i < j; i++) {
       game.objects.spaceBalls[i].restore();
     }
 
@@ -7939,7 +8040,7 @@ function Survivor() {
 
     game.objects.ship.reset();
 
-    objects.gameLoop.resume();
+    game.objects.gameLoop.resume();
 
     console.log('game reset complete');
 
@@ -7951,7 +8052,7 @@ function Survivor() {
 
     if (o) {
 
-      if (window.location.toString().match(/mapData/i)) {
+      if (winloc.match(/mapData/i)) {
 
         // assign the link including the mapData, replacing MAP_FREE_SPACE_CHAR with MAP_ALT_FREE_SPACE_CHAR
         o.href = 'editor.html#mapData=' + survivor.mapData.join('/').replace(/\s/g, MAP_ALT_FREE_SPACE_CHAR);
@@ -7969,7 +8070,7 @@ function Survivor() {
 
   function assignHelpLink() {
 
-    var o = document.getElementById('help');
+    var oHelp = document.getElementById('help');
 
     function mouseDownHandler(e) {
 
@@ -7987,7 +8088,7 @@ function Survivor() {
         o = document.getElementById('help-screen');
         oBody = o.getElementsByTagName('div')[0];
 
-        oBody.style.marginTop = -parseInt(oBody.offsetHeight/2, 10) + 'px';
+        oBody.style.marginTop = -parseInt(oBody.offsetHeight / 2, 10) + 'px';
 
         game.objects.gameLoop.pause();
 
@@ -8005,9 +8106,9 @@ function Survivor() {
 
     }
 
-    if (o) {
+    if (oHelp) {
 
-      o.onmousedown = mouseDownHandler;
+      oHelp.onmousedown = mouseDownHandler;
 
       // and get the help screen, too
       document.getElementById('help-screen').onclick = mouseDownHandler;
@@ -8054,17 +8155,17 @@ function Survivor() {
       autoLoad: true
     });
 
-    for (i=0; i<soundSprites.boomSpriteCounterMax; i++) {
+    for (i = 0; i < soundSprites.boomSpriteCounterMax; i++) {
       soundManager.createSound({
-        id: 'boom-sprite-'+i,
+        id: 'boom-sprite-' + i,
         url: 'audio/boom-sprite.mp3',
         autoLoad: true
       });
     }
 
-    for (i=0; i<soundSprites.popSpriteCounterMax; i++) {
+    for (i = 0; i < soundSprites.popSpriteCounterMax; i++) {
       soundManager.createSound({
-        id: 'pop-sprite-'+i,
+        id: 'pop-sprite-' + i,
         url: 'audio/pop-sprite.mp3',
         autoLoad: true
       });
@@ -8074,34 +8175,34 @@ function Survivor() {
 
   function init() {
 
-    objects.gameLoop = new GameLoop();
+    game.objects.gameLoop = new GameLoop();
 
-    if (soundManager.ok() && !IS_MUTED) {
+    if (soundManager.ok() && !IS_MUTED && !isSafari) {
       initAudio();
     }
 
-    objects.collision = new Collision();
+    game.objects.collision = new Collision();
 
-    objects.screen = new Screen();
+    game.objects.screen = new Screen();
 
     console.log('creating BaseController()...');
 
-    objects.baseController = new BaseController();
-    objects.baseController.init();
+    game.objects.baseController = new BaseController();
+    game.objects.baseController.init();
 
     console.log('calling createGrid()');
 
-    data.map = createGrid();
+    game.data.map = createGrid();
 
-    objects.screen.init();
+    game.objects.screen.init();
 
-    objects.statsController = new StatsController();
+    game.objects.statsController = new StatsController();
 
     // 2D array tracking references to moving objects
-    objects.turretGunfireMap = new ObjectMap();
-    objects.shipGunfireMap = new ObjectMap();
-    objects.badGuyMap = new ObjectMap();
-    objects.spaceBallMap = new ObjectMap();
+    game.objects.turretGunfireMap = new ObjectMap();
+    game.objects.shipGunfireMap = new ObjectMap();
+    game.objects.badGuyMap = new ObjectMap();
+    game.objects.spaceBallMap = new ObjectMap();
 
     console.log('creating ship');
 
@@ -8115,42 +8216,48 @@ function Survivor() {
 
     createSpaceBalls();
 
+    // shall we use GPU acceleration tricks based on Chrome's DevTools?
+    if (USE_TRANSFORM) {
+      console.log('using CSS3 transforms for GPU acceleration');
+      utils.css.add(game.dom.world, 'use-transform');
+    }
+
     // append fragment containing everything to DOM
 
-    dom.world.appendChild(dom.worldFragment);
+    game.dom.world.appendChild(game.dom.worldFragment);
 
     console.log('world created');
 
     // position ship
     // hack - otherwise, window scroll doesn't quite exist yet or something and doesn't get picked up.
     window.setTimeout(function() {
-      objects.ship.setDefaultPosition();
+      game.objects.ship.setDefaultPosition();
       game.objects.ship.findSafeRespawnLocation();
     }, 20);
 
     console.log('keyboard init');
 
-    objects.keyboardMonitor = new KeyboardMonitor();
-    objects.keyboardMonitor.init();
+    game.objects.keyboardMonitor = new KeyboardMonitor();
+    game.objects.keyboardMonitor.init();
 
-    objects.focusMonitor = new FocusMonitor();
-    objects.focusMonitor.init();
+    game.objects.focusMonitor = new FocusMonitor();
+    game.objects.focusMonitor.init();
 
     game.objects.levelEndSequence = new LevelEndSequence({
       node: document.getElementById('level-end-sequence')
     });
 
-    objects.smartbombController = new SmartbombController();
+    game.objects.smartbombController = new SmartbombController();
 
-    objects.gameController = new GameController();
-    objects.gameController.init();
+    game.objects.gameController = new GameController();
+    game.objects.gameController.init();
 
     assignRemixLink();
 
     assignHelpLink();
 
     // start game loop
-    objects.gameLoop.init();
+    game.objects.gameLoop.init();
 
   }
 
@@ -8178,8 +8285,6 @@ function go_go_go() {
       l0 = document.getElementById('loading0'),
       l1 = document.getElementById('loading1'),
       l2 = document.getElementById('loading2');
-
-  document.getElementById('cursor').style.display = 'none';
 
   function startGame() {
 
@@ -8234,7 +8339,7 @@ function go_go_go() {
     startGame();
 
     // and show the "tweeter" link, encouraging creators to share (maybe)
-    if (tweeter && !window.location.href.match(/temp/i)) {
+    if (tweeter && !winloc.match(/temp/i)) {
 
       tweeter.style.display = 'inline';
 
@@ -8248,9 +8353,9 @@ function go_go_go() {
             mapData,
             xhr;
 
-        str = decodeURI(window.location.toString());
+        str = decodeURI(winloc);
 
-        mapData = str.substr(str.indexOf('mapData')+8);
+        mapData = str.substr(str.indexOf('mapData') + 8);
 
         serviceURL = 'https://twitter.com/share/?text=';
 
@@ -8305,11 +8410,21 @@ function go_go_go() {
 
     }
 
-    return false;
-
   }
 
   // first, make the noise.
+
+  var _1541;
+
+  function play1541() {
+    var cursor = document.getElementById('cursor');
+    if (!cursor) return;
+    l0.style.display = 'block';
+    cursor.style.display = 'none';
+    _1541.play();
+    utils.events.remove(document, 'keydown', play1541);
+    utils.events.remove(document, 'mousedown', play1541);
+  }
 
   if (soundManager.ok() && !navigator.userAgent.match(/mobile/i) && !IS_MUTED) {
 
@@ -8320,7 +8435,7 @@ function go_go_go() {
      * (gappy audio track from video fixed for use in this project)
      */
 
-    var _1541 = soundManager.createSound({
+    _1541 = soundManager.createSound({
       id: 'c64-1541-format',
       url: 'audio/1541-formatting-sound-short.mp3'
     });
@@ -8353,9 +8468,10 @@ function go_go_go() {
 
     _1541.onPosition(6000, showGameTitleScreen);
 
-    _1541.play();
+    // wait for key or click, because of <audio> playback restrictions.
 
-    l0.style.display = 'block';
+    utils.events.add(document, 'keydown', play1541);
+    utils.events.add(document, 'mousedown', play1541);
 
   } else {
 
@@ -8371,28 +8487,30 @@ function go_go_go() {
 
 }
 
-if (!window.location.protocol.match(/http/i) || document.domain.match(/schillmania\.com/i)) {
-
+if (isSafari) {
+  console.warn('Disabling standard HTML5 Audio() because Safari 11 has performance issues. Old bug here. ?forceaudio to bypass this warning. https://bugs.webkit.org/show_bug.cgi?id=116145');
   soundManager.onready(function() {
-    if (document.referrer && document.referrer.match(/editor/i)) {
-      // if coming from the editor, skip straight to the goods.
-      go_go_go();
-    } else {
-      // let "READY." show for a second.
-      setTimeout(go_go_go, 1000);
-    }
+    // edge case: disable() doesn't seem to work within onready(), heh.
+    window.setTimeout(soundManager.disable, 500);
   });
+}
 
-  soundManager.ontimeout(go_go_go);
+soundManager.onready(function() {
+  if (document.referrer && document.referrer.match(/editor/i)) {
+    // if coming from the editor, skip straight to the goods.
+    go_go_go();
+  } else {
+    // let "READY." show for a second.
+    setTimeout(go_go_go, 1000);
+  }
+});
 
-} else {
-
+soundManager.ontimeout(function() {
   // no sound effects for external use.
   // let "READY." show for a second.
   console.log('Note: sound effects are disabled.');
   setTimeout(go_go_go, 1000);
-
-}
+});
 
 // invocation closure
 }(window));
